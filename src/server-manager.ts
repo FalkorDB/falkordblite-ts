@@ -112,17 +112,20 @@ export class ServerManager {
     registerServer(this);
   }
 
-  /** Stop the redis-server gracefully, falling back to SIGTERM/SIGKILL. */
-  async stop(): Promise<void> {
+  /**
+   * Stop the redis-server gracefully, falling back to SIGTERM/SIGKILL.
+   * @param save If true, persist data to disk before shutting down (SHUTDOWN SAVE).
+   */
+  async stop(save = false): Promise<void> {
     if (!this.process || this.process.exitCode !== null) {
       await this.cleanupFiles();
       unregisterServer(this);
       return;
     }
 
-    // Try SHUTDOWN NOSAVE via the socket.
+    // Try SHUTDOWN via the socket.
     try {
-      await this.sendCommand('SHUTDOWN', 'NOSAVE');
+      await this.sendCommand('SHUTDOWN', save ? 'SAVE' : 'NOSAVE');
     } catch {
       // Command may fail if server is already shutting down — that's fine.
     }
