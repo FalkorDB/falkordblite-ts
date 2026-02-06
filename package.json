@@ -5,12 +5,14 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "scripts"
   ],
   "engines": {
     "node": ">=18"
   },
   "scripts": {
+    "postinstall": "node scripts/postinstall.js",
     "build": "tsc",
     "clean": "rimraf dist",
     "lint": "eslint src/",
