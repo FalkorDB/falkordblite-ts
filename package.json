@@ -1,0 +1,57 @@
+{
+  "name": "falkordblite",
+  "version": "0.1.0",
+  "description": "Embedded FalkorDB for Node.js/TypeScript — zero-config graph database",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rimraf dist",
+    "lint": "eslint src/",
+    "test": "jest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "falkordb",
+    "graph",
+    "database",
+    "embedded",
+    "redis",
+    "cypher"
+  ],
+  "author": "FalkorDB",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/falkordb/falkordblite-ts"
+  },
+  "dependencies": {
+    "falkordb": "^6.6.0"
+  },
+  "peerDependencies": {
+    "falkordb": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "falkordb": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "jest": "^29.7.0",
+    "rimraf": "^5.0.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
