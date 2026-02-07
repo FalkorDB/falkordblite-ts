@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export interface ConfigGeneratorOptions {
@@ -30,13 +29,13 @@ export class ConfigGenerator {
   constructor(options: ConfigGeneratorOptions) {
     this.options = options;
     this.socketPath =
-      options.unixSocketPath ?? ConfigGenerator.generateSocketPath();
+      options.unixSocketPath ?? ConfigGenerator.generateSocketPath(options.dbDir);
   }
 
-  /** Generate a unique temporary socket path. */
-  private static generateSocketPath(): string {
+  /** Generate a unique socket path inside the configured dbDir. */
+  private static generateSocketPath(dbDir: string): string {
     const id = randomBytes(8).toString('hex');
-    return join(tmpdir(), `falkordblite-${id}.sock`);
+    return join(dbDir, `falkordblite-${id}.sock`);
   }
 
   /** Return the Unix socket path this config will use. */
