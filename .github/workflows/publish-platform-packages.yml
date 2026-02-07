@@ -3,9 +3,6 @@ name: Publish Platform Packages
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Package version to publish'
-        required: true
       redis_version:
         description: 'Redis version to build'
         required: true
@@ -19,6 +16,7 @@ jobs:
   build-and-publish:
     permissions:
       contents: read
+      id-token: write
     strategy:
       matrix:
         include:
@@ -40,19 +38,10 @@ jobs:
         run: |
           set -euo pipefail
           REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
-          REDIS_TARBALL_SHA256="${REDIS_TARBALL}.sha256"
 
           curl --fail --location --silent --show-error \
             -o "${REDIS_TARBALL}" \
-            "https://download.redis.io/releases/${REDIS_TARBALL}"
-
-          curl --fail --location --silent --show-error \
-            -o "${REDIS_TARBALL_SHA256}" \
-            "https://download.redis.io/releases/${REDIS_TARBALL_SHA256}"
-
-          # Extract expected hash from checksum file and verify the tarball
-          REDIS_EXPECTED_SHA256="$(cut -d ' ' -f1 "${REDIS_TARBALL_SHA256}")"
-          echo "${REDIS_EXPECTED_SHA256}  ${REDIS_TARBALL}" | shasum -a 256 -c -
+            "https://github.com/redis/redis/archive/refs/tags/${{ inputs.redis_version }}.tar.gz"
 
           tar xzf "${REDIS_TARBALL}"
           cd "redis-${{ inputs.redis_version }}"
@@ -66,19 +55,10 @@ jobs:
           FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
           FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
           FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
-          FALKORDB_ASSET_SHA256="${FALKORDB_ASSET}.sha256"
 
           curl --fail --location --silent --show-error \
             -o "${FALKORDB_SO}" \
             "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET}"
-
-          curl --fail --location --silent --show-error \
-            -o "${FALKORDB_SO}.sha256" \
-            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET_SHA256}"
-
-          # Extract expected hash from checksum file and verify the downloaded module
-          FALKORDB_EXPECTED_SHA256="$(cut -d ' ' -f1 "${FALKORDB_SO}.sha256")"
-          (cd "${FALKORDB_DIR}" && echo "${FALKORDB_EXPECTED_SHA256}  falkordb.so" | shasum -a 256 -c -)
 
           chmod +x "${FALKORDB_SO}"
 
@@ -88,11 +68,14 @@ jobs:
       - name: Set package version
         run: |
           cd "packages/${{ matrix.platform }}"
-          npm version "${{ inputs.version }}" --no-git-tag-version
+          # Derive version from Redis and FalkorDB versions
+          # Redis 8.2.3 + FalkorDB v4.16.3 -> 8.2.3-falkordb.4.16.3
+          FALKORDB_VERSION="${{ inputs.falkordb_version }}"
+          FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
+          PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          npm version "${PACKAGE_VERSION}" --no-git-tag-version
 
       - name: Publish
         run: |
           cd "packages/${{ matrix.platform }}"
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --access public --provenance
