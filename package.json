@@ -1,6 +1,6 @@
 {
   "name": "falkordblite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Embedded FalkorDB for Node.js/TypeScript — zero-config graph database",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
