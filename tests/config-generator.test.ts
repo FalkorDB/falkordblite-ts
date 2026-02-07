@@ -1,4 +1,3 @@
-import { tmpdir } from 'node:os';
 import { ConfigGenerator, type ConfigGeneratorOptions } from '../src/config-generator';
 
 // Minimal valid options for most tests.
@@ -34,13 +33,13 @@ describe('ConfigGenerator', () => {
     expect(parsed['dbfilename']).toBe('dump.rdb');
   });
 
-  it('auto-generates a socket path in tmpdir when none provided', () => {
+  it('auto-generates a socket path in dbDir when none provided', () => {
     const gen = new ConfigGenerator(DEFAULTS);
     const socketPath = gen.getSocketPath();
 
-    expect(socketPath).toContain('falkordblite-');
+    expect(socketPath).toContain('fdb-');
     expect(socketPath).toContain('.sock');
-    expect(socketPath.startsWith(tmpdir())).toBe(true);
+    expect(socketPath.startsWith(DEFAULTS.dbDir)).toBe(true);
   });
 
   it('uses a custom socket path when provided', () => {
@@ -131,5 +130,20 @@ describe('ConfigGenerator', () => {
   it('ends with a newline', () => {
     const config = new ConfigGenerator(DEFAULTS).generate();
     expect(config.endsWith('\n')).toBe(true);
+  });
+
+  it('throws error when generated socket path exceeds length limit on Unix', () => {
+    // Create a very long dbDir path that will exceed the limit
+    const longDbDir = '/a'.repeat(90); // This will create a path > 100 chars when socket name is added
+    
+    // Only test on non-Windows platforms
+    if (process.platform !== 'win32') {
+      expect(() => {
+        new ConfigGenerator({
+          ...DEFAULTS,
+          dbDir: longDbDir,
+        });
+      }).toThrow(/Generated Unix socket path is too long/);
+    }
   });
 });
