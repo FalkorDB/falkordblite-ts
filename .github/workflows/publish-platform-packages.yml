@@ -17,6 +17,8 @@ on:
 
 jobs:
   build-and-publish:
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
