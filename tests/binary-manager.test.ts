@@ -96,10 +96,9 @@ describe('BinaryManager', () => {
       expect(() => bm.getFalkorDBModulePath()).toThrow('not found at');
     });
 
-    it('falls back to system PATH for redis-server when binDir is empty', () => {
-      const systemPath = BinaryManager.findInSystemPath('redis-server');
-      if (!systemPath) return; // Skip test if redis-server not in PATH
-      
+    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+
+    (hasRedisInPath() ? it : it.skip)('falls back to system PATH for redis-server when binDir is empty', () => {
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       const result = bm.getRedisServerPath();
       expect(result).toBeDefined();
@@ -121,10 +120,9 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('ensureBinaries', () => {
-    it('returns valid paths for both binaries', async () => {
-      const systemRedis = BinaryManager.findInSystemPath('redis-server');
-      if (!systemRedis) return; // Skip if redis-server not available
-      
+    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+
+    (hasRedisInPath() ? it : it.skip)('returns valid paths for both binaries', async () => {
       const bm = new BinaryManager();
       const paths = await bm.ensureBinaries();
 
@@ -134,10 +132,7 @@ describe('BinaryManager', () => {
       expect(existsSync(paths.falkordbModulePath)).toBe(true);
     });
 
-    it('is idempotent — second call returns same paths instantly', async () => {
-      const systemRedis = BinaryManager.findInSystemPath('redis-server');
-      if (!systemRedis) return; // Skip if redis-server not available
-      
+    (hasRedisInPath() ? it : it.skip)('is idempotent — second call returns same paths instantly', async () => {
       const bm = new BinaryManager();
       const first = await bm.ensureBinaries();
       const second = await bm.ensureBinaries();
@@ -152,10 +147,9 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('npm package resolution', () => {
-    it('attempts to resolve redis-server from npm package before system PATH', () => {
-      const systemRedis = BinaryManager.findInSystemPath('redis-server');
-      if (!systemRedis) return; // Skip if redis-server not available
-      
+    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+
+    (hasRedisInPath() ? it : it.skip)('attempts to resolve redis-server from npm package before system PATH', () => {
       // This test verifies the resolution order without requiring the npm package
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       const result = bm.getRedisServerPath();
@@ -165,10 +159,7 @@ describe('BinaryManager', () => {
       expect(existsSync(result)).toBe(true);
     });
 
-    it('attempts to resolve falkordb module from npm package before download', async () => {
-      const systemRedis = BinaryManager.findInSystemPath('redis-server');
-      if (!systemRedis) return; // Skip if redis-server not available
-      
+    (hasRedisInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {
       // This test verifies that ensureFalkorDBModule checks npm packages first
       const bm = new BinaryManager();
       const paths = await bm.ensureBinaries();
@@ -196,10 +187,7 @@ describe('BinaryManager', () => {
       expect(bm.getFalkorDBModulePath()).toBe(modulePath);
     });
 
-    it('gracefully falls back when npm package is not installed', () => {
-      const systemRedis = BinaryManager.findInSystemPath('redis-server');
-      if (!systemRedis) return; // Skip if redis-server not available
-      
+    (hasRedisInPath() ? it : it.skip)('gracefully falls back when npm package is not installed', () => {
       // With a nonexistent binDir and no npm package, should fall back to system PATH
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       

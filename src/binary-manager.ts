@@ -1,6 +1,6 @@
 import { existsSync, createWriteStream } from 'node:fs';
 import { chmod, mkdir, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { platform, arch } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { get as httpsGet } from 'node:https';
@@ -169,10 +169,7 @@ export class BinaryManager {
     try {
       const key = BinaryManager.detectPlatform();
       const pkgName = `@falkordblite/${key}`;
-      const pkgDir = join(
-        require.resolve(`${pkgName}/package.json`),
-        '..',
-      );
+      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
       const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
       if (existsSync(npmBin)) return npmBin;
     } catch {
@@ -210,10 +207,7 @@ export class BinaryManager {
     // 3. Platform-specific npm package (@falkordblite/<platform>)
     try {
       const pkgName = `@falkordblite/${key}`;
-      const pkgDir = join(
-        require.resolve(`${pkgName}/package.json`),
-        '..',
-      );
+      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
       const npmBin = join(pkgDir, 'bin', PLATFORMS[key].moduleName);
       if (existsSync(npmBin)) return npmBin;
     } catch {
@@ -247,7 +241,7 @@ export class BinaryManager {
     // Check platform-specific npm package first
     try {
       const pkgName = `@falkordblite/${key}`;
-      const pkgDir = join(require.resolve(`${pkgName}/package.json`), '..');
+      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
       const npmBin = join(pkgDir, 'bin', meta.moduleName);
       if (existsSync(npmBin)) return npmBin;
     } catch {
