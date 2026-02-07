@@ -1,0 +1,63 @@
+name: Publish Platform Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version to publish'
+        required: true
+      redis_version:
+        description: 'Redis version to build'
+        required: true
+        default: '7.2.7'
+      falkordb_version:
+        description: 'FalkorDB release tag'
+        required: true
+        default: 'v4.16.3'
+
+jobs:
+  build-and-publish:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            falkordb_asset: falkordb-x64.so
+          - os: macos-latest
+            platform: darwin-arm64
+            falkordb_asset: falkordb-macos-arm64v8.so
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Build Redis from source
+        run: |
+          curl -sL "https://download.redis.io/releases/redis-${{ inputs.redis_version }}.tar.gz" | tar xz
+          cd "redis-${{ inputs.redis_version }}"
+          make redis-server -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
+
+      - name: Download FalkorDB module
+        run: |
+          curl -L -o "packages/${{ matrix.platform }}/bin/falkordb.so" \
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${{ matrix.falkordb_asset }}"
+          chmod +x "packages/${{ matrix.platform }}/bin/falkordb.so"
+
+      - name: Verify redis-server
+        run: ./packages/${{ matrix.platform }}/bin/redis-server --version
+
+      - name: Set package version
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          npm version "${{ inputs.version }}" --no-git-tag-version
+
+      - name: Publish
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

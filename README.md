@@ -24,8 +24,10 @@ await db.close();
 npm install falkordblite
 ```
 
-The package downloads the FalkorDB module at install time. If you also want to
-connect to remote servers, install the upstream client:
+The package automatically installs pre-built Redis + FalkorDB binaries for your
+platform. No system dependencies required.
+
+If you also want to connect to remote servers, install the upstream client:
 
 ```bash
 npm install falkordb
@@ -117,11 +119,11 @@ const db = await FalkorDB.connect({
 
 ## Platform support
 
-| Platform | Embedded binaries |
+| Platform | Status |
 | --- | --- |
-| Linux x64 | Supported |
-| macOS arm64 | Supported |
-| macOS x64 | Not yet (use system redis-server + custom module path) |
+| Linux x64 | ✅ Fully supported (binaries included) |
+| macOS arm64 | ✅ Fully supported (binaries included) |
+| macOS x64 | Use system redis-server + custom module path |
 | Windows | Use WSL2 or a remote server |
 
 ## Troubleshooting

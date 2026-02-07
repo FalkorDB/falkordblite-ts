@@ -165,7 +165,21 @@ export class BinaryManager {
       // Platform detection failed — skip bin/ check, fall through to PATH.
     }
 
-    // 3. System PATH
+    // 3. Platform-specific npm package (@falkordblite/<platform>)
+    try {
+      const key = BinaryManager.detectPlatform();
+      const pkgName = `@falkordblite/${key}`;
+      const pkgDir = join(
+        require.resolve(`${pkgName}/package.json`),
+        '..',
+      );
+      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
+      if (existsSync(npmBin)) return npmBin;
+    } catch {
+      // Package not installed — fall through to system PATH.
+    }
+
+    // 4. System PATH
     const system = BinaryManager.findInSystemPath('redis-server');
     if (system) return system;
 
@@ -193,6 +207,19 @@ export class BinaryManager {
     const local = join(this.binDir, key, PLATFORMS[key].moduleName);
     if (existsSync(local)) return local;
 
+    // 3. Platform-specific npm package (@falkordblite/<platform>)
+    try {
+      const pkgName = `@falkordblite/${key}`;
+      const pkgDir = join(
+        require.resolve(`${pkgName}/package.json`),
+        '..',
+      );
+      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].moduleName);
+      if (existsSync(npmBin)) return npmBin;
+    } catch {
+      // Package not installed — fall through.
+    }
+
     throw new Error(
       'FalkorDB module not found. Run `npm run postinstall` to download it,\n' +
       'or pass falkordbModulePath in options.',
@@ -216,6 +243,17 @@ export class BinaryManager {
 
     const key = BinaryManager.detectPlatform();
     const meta = PLATFORMS[key];
+
+    // Check platform-specific npm package first
+    try {
+      const pkgName = `@falkordblite/${key}`;
+      const pkgDir = join(require.resolve(`${pkgName}/package.json`), '..');
+      const npmBin = join(pkgDir, 'bin', meta.moduleName);
+      if (existsSync(npmBin)) return npmBin;
+    } catch {
+      // Not installed — proceed with download.
+    }
+
     const targetDir = join(this.binDir, key);
     const targetPath = join(targetDir, meta.moduleName);
 
