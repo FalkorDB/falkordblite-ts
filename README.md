@@ -1,7 +1,7 @@
 # falkordblite
 
 [![npm version](https://img.shields.io/npm/v/falkordblite.svg)](https://www.npmjs.com/package/falkordblite)
-[![license](https://img.shields.io/npm/l/falkordblite.svg)](LICENSE)
+[![license](https://img.shields.io/github/license/falkordb/falkordblite-ts.svg)](https://github.com/falkordb/falkordblite-py)
 [![node](https://img.shields.io/node/v/falkordblite.svg)](package.json)
 
 Embedded FalkorDB for Node.js/TypeScript. Zero-config graph database that runs
