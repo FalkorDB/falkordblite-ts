@@ -38,7 +38,7 @@ jobs:
         run: |
           curl -sL "https://download.redis.io/releases/redis-${{ inputs.redis_version }}.tar.gz" | tar xz
           cd "redis-${{ inputs.redis_version }}"
-          make redis-server -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
           cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
 
       - name: Download FalkorDB module
