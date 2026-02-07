@@ -38,10 +38,6 @@
   ],
   "author": "FalkorDB",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/falkordb/falkordblite-ts"
-  },
   "dependencies": {
     "falkordb": "^6.6.0"
   },
