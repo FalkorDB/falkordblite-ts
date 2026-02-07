@@ -23,15 +23,20 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install redis-server (Ubuntu)
+      - name: Install redis-server and dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
+          curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
           sudo apt-get update
-          sudo apt-get install -y redis-server
+          sudo apt-get install -y redis-server libgomp1
 
-      - name: Install redis-server (macOS)
+      - name: Install redis-server and dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install redis
+        run: brew install redis libomp
+
+      - name: Verify redis-server version
+        run: redis-server --version
 
       - name: Install dependencies
         run: npm ci

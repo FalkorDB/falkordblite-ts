@@ -61,8 +61,15 @@ export class ServerManager {
 
     this.process = child;
 
-    // Collect stderr for error reporting.
+    // Collect stdout and stderr for error reporting.
+    // Redis logs errors (including module load failures) to stdout.
+    let stdout = '';
     let stderr = '';
+    if (child.stdout) {
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+    }
     if (child.stderr) {
       child.stderr.on('data', (chunk: Buffer) => {
         stderr += chunk.toString();
@@ -80,7 +87,7 @@ export class ServerManager {
         if (code !== null && code !== 0) {
           reject(
             new Error(
-              `redis-server exited with code ${code} before becoming ready.\nstderr: ${stderr}`,
+              `redis-server exited with code ${code} before becoming ready.\nstdout: ${stdout}\nstderr: ${stderr}`,
             ),
           );
         } else if (signal) {
