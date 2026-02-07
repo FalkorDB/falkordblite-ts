@@ -44,20 +44,26 @@ function ensureHandlers(): void {
   if (handlersRegistered) return;
   handlersRegistered = true;
 
+  const isTestEnv =
+    process.env.NODE_ENV === 'test' ||
+    typeof process.env.JEST_WORKER_ID !== 'undefined';
+
   // Synchronous last-resort cleanup when the process exits.
   process.on('exit', () => {
     stopAllSync();
   });
 
-  // Graceful shutdown on signals.
-  const signalHandler = async (signal: NodeJS.Signals) => {
-    await stopAllAsync();
-    // Re-raise the signal so the default handler can terminate the process.
-    process.kill(process.pid, signal);
-  };
+  // Graceful shutdown on signals (skip in Jest workers to avoid open handles).
+  if (!isTestEnv) {
+    const signalHandler = async (signal: NodeJS.Signals) => {
+      await stopAllAsync();
+      // Re-raise the signal so the default handler can terminate the process.
+      process.kill(process.pid, signal);
+    };
 
-  process.once('SIGINT', () => void signalHandler('SIGINT'));
-  process.once('SIGTERM', () => void signalHandler('SIGTERM'));
+    process.once('SIGINT', () => void signalHandler('SIGINT'));
+    process.once('SIGTERM', () => void signalHandler('SIGTERM'));
+  }
 
   // Handle uncaught exceptions — attempt cleanup, then re-throw.
   process.on('uncaughtException', (err) => {

@@ -97,11 +97,18 @@ export class ServerManager {
     const timeoutMs = this.options.startupTimeoutMs ?? 10_000;
     const pollMs = this.options.pollIntervalMs ?? 100;
 
-    const ready = this.waitForReady(timeoutMs, pollMs);
+    const abortController = new AbortController();
+    const ready = this.waitForReady(
+      timeoutMs,
+      pollMs,
+      abortController.signal,
+    );
 
     try {
       await Promise.race([ready, earlyExit]);
     } catch (err) {
+      abortController.abort();
+      await ready.catch(() => {});
       // Ensure the process is killed if startup failed.
       this.killProcess();
       await this.cleanupFiles();
@@ -172,12 +179,37 @@ export class ServerManager {
    * Poll the Unix socket with Redis PING commands until we get PONG
    * or the timeout expires.
    */
-  private waitForReady(timeoutMs: number, pollMs: number): Promise<void> {
+  private waitForReady(
+    timeoutMs: number,
+    pollMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + timeoutMs;
+      let timer: NodeJS.Timeout | undefined;
+
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      };
+
+      const onAbort = () => {
+        cleanup();
+        reject(new Error('redis-server startup aborted'));
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
 
       const attempt = () => {
+        if (signal?.aborted) return;
         if (Date.now() > deadline) {
+          cleanup();
           reject(
             new Error(
               `redis-server did not become ready within ${timeoutMs}ms`,
@@ -187,9 +219,12 @@ export class ServerManager {
         }
 
         this.ping()
-          .then(() => resolve())
+          .then(() => {
+            cleanup();
+            resolve();
+          })
           .catch(() => {
-            setTimeout(attempt, pollMs);
+            timer = setTimeout(attempt, pollMs);
           });
       };
 
