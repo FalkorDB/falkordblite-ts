@@ -1,0 +1,42 @@
+# Source (compiled output is in dist/)
+src/
+
+# Tests
+tests/
+
+# CI/CD
+.github/
+
+# Config files
+tsconfig.json
+jest.config.js
+eslint.config.mjs
+.eslintcache
+
+# Coverage
+coverage/
+
+# Dev artifacts
+*.tsbuildinfo
+*.tgz
+
+# Unix sockets
+*.sock
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Planning
+planing.md
