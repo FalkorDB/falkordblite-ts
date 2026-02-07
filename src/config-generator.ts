@@ -43,6 +43,8 @@ export class ConfigGenerator {
     // nested dbDir paths can exceed this limit and cause runtime failures
     // when binding the socket. Guard against that here and provide a clear
     // error message to the caller.
+    // We use 100 as a conservative limit to provide a safety buffer below
+    // the actual platform minimums.
     const MAX_UNIX_SOCKET_PATH_LENGTH = 100;
     if (process.platform !== 'win32' && socketPath.length > MAX_UNIX_SOCKET_PATH_LENGTH) {
       throw new Error(

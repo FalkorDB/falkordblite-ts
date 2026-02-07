@@ -133,17 +133,31 @@ describe('ConfigGenerator', () => {
   });
 
   it('throws error when generated socket path exceeds length limit on Unix', () => {
-    // Create a very long dbDir path that will exceed the limit
-    const longDbDir = '/a'.repeat(90); // This will create a path > 100 chars when socket name is added
-    
     // Only test on non-Windows platforms
-    if (process.platform !== 'win32') {
-      expect(() => {
-        new ConfigGenerator({
-          ...DEFAULTS,
-          dbDir: longDbDir,
-        });
-      }).toThrow(/Generated Unix socket path is too long/);
+    if (process.platform === 'win32') {
+      return;
     }
+
+    // Socket filename will be "fdb-" + 16 hex chars + ".sock" = 25 chars
+    // Total path = dbDir + "/" + filename (25 chars)
+    // To exceed 100 char limit, dbDir needs to be 76+ chars (100 - 25 + 1)
+    const pathToExceedLimit = '/a'.repeat(38); // 76 characters (38 * 2)
+    
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathToExceedLimit, // 76 + 1 + 25 = 102 chars (exceeds limit)
+      });
+    }).toThrow(/Generated Unix socket path is too long/);
+
+    // Verify a path at exactly the limit doesn't throw
+    // 74 char path + 1 separator + 25 char filename = 100 chars (at limit)
+    const pathAtLimit = '/a'.repeat(37); // 74 characters (37 * 2)
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathAtLimit,
+      });
+    }).not.toThrow();
   });
 });
