@@ -9,7 +9,7 @@ on:
       redis_version:
         description: 'Redis version to build'
         required: true
-        default: '7.2.7'
+        default: '8.2.3'
       falkordb_version:
         description: 'FalkorDB release tag'
         required: true
