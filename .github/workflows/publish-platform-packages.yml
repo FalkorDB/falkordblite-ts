@@ -1,0 +1,98 @@
+name: Publish Platform Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version to publish'
+        required: true
+      redis_version:
+        description: 'Redis version to build'
+        required: true
+        default: '8.2.3'
+      falkordb_version:
+        description: 'FalkorDB release tag'
+        required: true
+        default: 'v4.16.3'
+
+jobs:
+  build-and-publish:
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            falkordb_asset: falkordb-x64.so
+          - os: macos-latest
+            platform: darwin-arm64
+            falkordb_asset: falkordb-macos-arm64v8.so
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Build Redis from source
+        run: |
+          set -euo pipefail
+          REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
+          REDIS_TARBALL_SHA256="${REDIS_TARBALL}.sha256"
+
+          curl --fail --location --silent --show-error \
+            -o "${REDIS_TARBALL}" \
+            "https://download.redis.io/releases/${REDIS_TARBALL}"
+
+          curl --fail --location --silent --show-error \
+            -o "${REDIS_TARBALL_SHA256}" \
+            "https://download.redis.io/releases/${REDIS_TARBALL_SHA256}"
+
+          # Extract expected hash from checksum file and verify the tarball
+          REDIS_EXPECTED_SHA256="$(cut -d ' ' -f1 "${REDIS_TARBALL_SHA256}")"
+          echo "${REDIS_EXPECTED_SHA256}  ${REDIS_TARBALL}" | shasum -a 256 -c -
+
+          tar xzf "${REDIS_TARBALL}"
+          cd "redis-${{ inputs.redis_version }}"
+          make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
+          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
+          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
+
+      - name: Download FalkorDB module
+        run: |
+          set -euo pipefail
+          FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
+          FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
+          FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
+          FALKORDB_ASSET_SHA256="${FALKORDB_ASSET}.sha256"
+
+          curl --fail --location --silent --show-error \
+            -o "${FALKORDB_SO}" \
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET}"
+
+          curl --fail --location --silent --show-error \
+            -o "${FALKORDB_SO}.sha256" \
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET_SHA256}"
+
+          # Extract expected hash from checksum file and verify the downloaded module
+          FALKORDB_EXPECTED_SHA256="$(cut -d ' ' -f1 "${FALKORDB_SO}.sha256")"
+          (cd "${FALKORDB_DIR}" && echo "${FALKORDB_EXPECTED_SHA256}  falkordb.so" | shasum -a 256 -c -)
+
+          chmod +x "${FALKORDB_SO}"
+
+      - name: Verify redis-server
+        run: ./packages/${{ matrix.platform }}/bin/redis-server --version
+
+      - name: Set package version
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          npm version "${{ inputs.version }}" --no-git-tag-version
+
+      - name: Publish
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

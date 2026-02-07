@@ -7,6 +7,10 @@ coverage/
 # Binaries (populated on install)
 bin/
 
+# Platform-specific package binaries
+packages/*/bin/*
+!packages/*/bin/.gitkeep
+
 # Unix sockets
 *.sock
 
