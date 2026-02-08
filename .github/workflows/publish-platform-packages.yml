@@ -46,6 +46,7 @@ jobs:
           tar xzf "${REDIS_TARBALL}"
           cd "redis-${{ inputs.redis_version }}"
           make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
+          mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
           cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
           chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
 
@@ -53,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
+          mkdir -p "${FALKORDB_DIR}"
           FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
           FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
 
