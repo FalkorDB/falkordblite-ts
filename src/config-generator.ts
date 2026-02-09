@@ -46,9 +46,10 @@ export class ConfigGenerator {
     // We use 108 as the limit to match the commonly observed maximum on
     // most platforms while still catching paths that would definitely fail.
     const MAX_UNIX_SOCKET_PATH_LENGTH = 108;
-    if (process.platform !== 'win32' && socketPath.length > MAX_UNIX_SOCKET_PATH_LENGTH) {
+    const byteLength = Buffer.byteLength(socketPath);
+    if (process.platform !== 'win32' && byteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
       throw new Error(
-        `Generated Unix socket path is too long (${socketPath.length} characters): "${socketPath}". ` +
+        `Generated Unix socket path is too long (${byteLength} bytes): "${socketPath}". ` +
           'Use a shorter dbDir or provide unixSocketPath explicitly.',
       );
     }
