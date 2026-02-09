@@ -35,7 +35,25 @@ export class ConfigGenerator {
   /** Generate a unique socket path inside the configured dbDir. */
   private static generateSocketPath(dbDir: string): string {
     const id = randomBytes(8).toString('hex');
-    return join(dbDir, `falkordblite-${id}.sock`);
+    const filename = `fdb-${id}.sock`;
+    const socketPath = join(dbDir, filename);
+
+    // Many Unix-like systems impose a relatively small maximum length on
+    // Unix domain socket paths (commonly around 104–108 bytes). Deeply
+    // nested dbDir paths can exceed this limit and cause runtime failures
+    // when binding the socket. Guard against that here and provide a clear
+    // error message to the caller.
+    // We use 100 as a conservative limit to provide a safety buffer below
+    // the actual platform minimums.
+    const MAX_UNIX_SOCKET_PATH_LENGTH = 100;
+    if (process.platform !== 'win32' && socketPath.length > MAX_UNIX_SOCKET_PATH_LENGTH) {
+      throw new Error(
+        `Generated Unix socket path is too long (${socketPath.length} characters): "${socketPath}". ` +
+          'Use a shorter dbDir or provide unixSocketPath explicitly.',
+      );
+    }
+
+    return socketPath;
   }
 
   /** Return the Unix socket path this config will use. */

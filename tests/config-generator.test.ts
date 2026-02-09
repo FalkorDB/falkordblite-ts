@@ -1,4 +1,3 @@
-import { tmpdir } from 'node:os';
 import { ConfigGenerator, type ConfigGeneratorOptions } from '../src/config-generator';
 
 // Minimal valid options for most tests.
@@ -34,13 +33,13 @@ describe('ConfigGenerator', () => {
     expect(parsed['dbfilename']).toBe('dump.rdb');
   });
 
-  it('auto-generates a socket path in tmpdir when none provided', () => {
+  it('auto-generates a socket path in dbDir when none provided', () => {
     const gen = new ConfigGenerator(DEFAULTS);
     const socketPath = gen.getSocketPath();
 
-    expect(socketPath).toContain('falkordblite-');
+    expect(socketPath).toContain('fdb-');
     expect(socketPath).toContain('.sock');
-    expect(socketPath.startsWith(tmpdir())).toBe(true);
+    expect(socketPath.startsWith(DEFAULTS.dbDir)).toBe(true);
   });
 
   it('uses a custom socket path when provided', () => {
@@ -131,5 +130,34 @@ describe('ConfigGenerator', () => {
   it('ends with a newline', () => {
     const config = new ConfigGenerator(DEFAULTS).generate();
     expect(config.endsWith('\n')).toBe(true);
+  });
+
+  it('throws error when generated socket path exceeds length limit on Unix', () => {
+    // Only test on non-Windows platforms
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    // Socket filename will be "fdb-" + 16 hex chars + ".sock" = 25 chars
+    // Total path = dbDir + "/" + filename (25 chars)
+    // To exceed 100 char limit, dbDir needs to be 76+ chars (100 - 25 + 1)
+    const pathToExceedLimit = '/a'.repeat(38); // 76 characters (38 * 2)
+    
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathToExceedLimit, // 76 + 1 + 25 = 102 chars (exceeds limit)
+      });
+    }).toThrow(/Generated Unix socket path is too long/);
+
+    // Verify a path at exactly the limit doesn't throw
+    // 74 char path + 1 separator + 25 char filename = 100 chars (at limit)
+    const pathAtLimit = '/a'.repeat(37); // 74 characters (37 * 2)
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathAtLimit,
+      });
+    }).not.toThrow();
   });
 });
