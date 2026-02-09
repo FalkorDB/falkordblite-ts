@@ -1,0 +1,83 @@
+name: Publish Platform Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      redis_version:
+        description: 'Redis version to build'
+        required: true
+        default: '8.2.3'
+      falkordb_version:
+        description: 'FalkorDB release tag'
+        required: true
+        default: 'v4.16.3'
+
+jobs:
+  build-and-publish:
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            falkordb_asset: falkordb-x64.so
+          - os: macos-latest
+            platform: darwin-arm64
+            falkordb_asset: falkordb-macos-arm64v8.so
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Build Redis from source
+        run: |
+          set -euo pipefail
+          REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
+
+          curl --fail --location --silent --show-error \
+            -o "${REDIS_TARBALL}" \
+            "https://github.com/redis/redis/archive/refs/tags/${{ inputs.redis_version }}.tar.gz"
+
+          tar xzf "${REDIS_TARBALL}"
+          cd "redis-${{ inputs.redis_version }}"
+          make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
+          mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
+          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
+          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
+
+      - name: Download FalkorDB module
+        run: |
+          set -euo pipefail
+          FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
+          mkdir -p "${FALKORDB_DIR}"
+          FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
+          FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
+
+          curl --fail --location --silent --show-error \
+            -o "${FALKORDB_SO}" \
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET}"
+
+          chmod +x "${FALKORDB_SO}"
+
+      - name: Verify redis-server
+        run: ./packages/${{ matrix.platform }}/bin/redis-server --version
+
+      - name: Set package version
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          # Derive version from Redis and FalkorDB versions
+          # Redis 8.2.3 + FalkorDB v4.16.3 -> 8.2.3-falkordb.4.16.3
+          FALKORDB_VERSION="${{ inputs.falkordb_version }}"
+          FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
+          PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          npm version "${PACKAGE_VERSION}" --no-git-tag-version
+
+      - name: Publish
+        run: |
+          cd "packages/${{ matrix.platform }}"
+          npm publish --access public --provenance

@@ -4,7 +4,13 @@
 
 **redis-server not found**
 
-- Install Redis on your system:
+The package now includes pre-built `redis-server` binaries for supported platforms
+(Linux x64, macOS arm64). If the binary is not found:
+
+- Ensure you're on a supported platform
+- If using `--no-optional` during install, the platform-specific packages may not
+  have been installed. Re-run `npm install` without that flag
+- Install Redis on your system as a fallback:
   - Ubuntu/Debian: `sudo apt install redis-server`
   - macOS: `brew install redis`
 - Or pass a custom path:
@@ -14,14 +20,13 @@
 
 **FalkorDB module not found**
 
-- Run the postinstall step manually:
-  ```bash
-  npm run postinstall
-  ```
-- If you are developing locally (no `dist/` yet):
-  ```bash
-  npm run build && npm run postinstall
-  ```
+The package now includes pre-built FalkorDB modules for supported platforms.
+If the module is not found:
+
+- Ensure you're on a supported platform
+- If using `--no-optional` during install, the platform-specific packages may not
+  have been installed. Re-run `npm install` without that flag
+- As a fallback, the module will be downloaded from GitHub on first run
 - Or pass a custom module path:
   ```ts
   const db = await FalkorDB.open({ modulePath: '/path/to/falkordb.so' });
