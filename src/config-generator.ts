@@ -39,13 +39,12 @@ export class ConfigGenerator {
     const socketPath = join(dbDir, filename);
 
     // Many Unix-like systems impose a relatively small maximum length on
-    // Unix domain socket paths (commonly around 104–108 bytes). Deeply
-    // nested dbDir paths can exceed this limit and cause runtime failures
-    // when binding the socket. Guard against that here and provide a clear
-    // error message to the caller.
-    // We use 108 as the limit to match the commonly observed maximum on
-    // most platforms while still catching paths that would definitely fail.
-    const MAX_UNIX_SOCKET_PATH_LENGTH = 108;
+    // Unix domain socket paths. Deeply nested dbDir paths can exceed this
+    // limit and cause runtime failures when binding the socket. Guard against
+    // that here and provide a clear error message to the caller.
+    // macOS: 104 bytes (UNIX_PATH_MAX in sys/un.h)
+    // Linux: 108 bytes (UNIX_PATH_MAX in sys/un.h)
+    const MAX_UNIX_SOCKET_PATH_LENGTH = process.platform === 'darwin' ? 104 : 108;
     const byteLength = Buffer.byteLength(socketPath);
     if (process.platform !== 'win32' && byteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
       throw new Error(
