@@ -46,7 +46,7 @@ export class ConfigGenerator {
     // Linux: 108 bytes (UNIX_PATH_MAX in sys/un.h)
     const MAX_UNIX_SOCKET_PATH_LENGTH = process.platform === 'darwin' ? 104 : 108;
     const byteLength = Buffer.byteLength(socketPath);
-    if (process.platform !== 'win32' && byteLength >= MAX_UNIX_SOCKET_PATH_LENGTH) {
+    if (process.platform !== 'win32' && byteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
       throw new Error(
         `Generated Unix socket path is too long (${byteLength} bytes): "${socketPath}". ` +
           'Use a shorter dbDir or provide unixSocketPath explicitly.',
