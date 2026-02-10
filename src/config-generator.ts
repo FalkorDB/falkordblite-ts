@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export interface ConfigGeneratorOptions {
@@ -30,13 +29,31 @@ export class ConfigGenerator {
   constructor(options: ConfigGeneratorOptions) {
     this.options = options;
     this.socketPath =
-      options.unixSocketPath ?? ConfigGenerator.generateSocketPath();
+      options.unixSocketPath ?? ConfigGenerator.generateSocketPath(options.dbDir);
   }
 
-  /** Generate a unique temporary socket path. */
-  private static generateSocketPath(): string {
+  /** Generate a unique socket path inside the configured dbDir. */
+  private static generateSocketPath(dbDir: string): string {
     const id = randomBytes(8).toString('hex');
-    return join(tmpdir(), `falkordblite-${id}.sock`);
+    const filename = `fdb-${id}.sock`;
+    const socketPath = join(dbDir, filename);
+
+    // Many Unix-like systems impose a relatively small maximum length on
+    // Unix domain socket paths. Deeply nested dbDir paths can exceed this
+    // limit and cause runtime failures when binding the socket. Guard against
+    // that here and provide a clear error message to the caller.
+    // macOS: 104 bytes (UNIX_PATH_MAX in sys/un.h)
+    // Linux: 108 bytes (UNIX_PATH_MAX in sys/un.h)
+    const MAX_UNIX_SOCKET_PATH_LENGTH = process.platform === 'darwin' ? 104 : 108;
+    const byteLength = Buffer.byteLength(socketPath);
+    if (process.platform !== 'win32' && byteLength > MAX_UNIX_SOCKET_PATH_LENGTH) {
+      throw new Error(
+        `Generated Unix socket path is too long (${byteLength} bytes): "${socketPath}". ` +
+          'Use a shorter dbDir or provide unixSocketPath explicitly.',
+      );
+    }
+
+    return socketPath;
   }
 
   /** Return the Unix socket path this config will use. */

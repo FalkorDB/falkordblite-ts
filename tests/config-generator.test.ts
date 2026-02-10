@@ -1,4 +1,3 @@
-import { tmpdir } from 'node:os';
 import { ConfigGenerator, type ConfigGeneratorOptions } from '../src/config-generator';
 
 // Minimal valid options for most tests.
@@ -34,13 +33,13 @@ describe('ConfigGenerator', () => {
     expect(parsed['dbfilename']).toBe('dump.rdb');
   });
 
-  it('auto-generates a socket path in tmpdir when none provided', () => {
+  it('auto-generates a socket path in dbDir when none provided', () => {
     const gen = new ConfigGenerator(DEFAULTS);
     const socketPath = gen.getSocketPath();
 
-    expect(socketPath).toContain('falkordblite-');
+    expect(socketPath).toContain('fdb-');
     expect(socketPath).toContain('.sock');
-    expect(socketPath.startsWith(tmpdir())).toBe(true);
+    expect(socketPath.startsWith(DEFAULTS.dbDir)).toBe(true);
   });
 
   it('uses a custom socket path when provided', () => {
@@ -131,5 +130,40 @@ describe('ConfigGenerator', () => {
   it('ends with a newline', () => {
     const config = new ConfigGenerator(DEFAULTS).generate();
     expect(config.endsWith('\n')).toBe(true);
+  });
+
+  it('throws error when generated socket path exceeds length limit on Unix', () => {
+    // Only test on non-Windows platforms
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    // Socket filename will be "fdb-" + 16 hex chars + ".sock" = 25 chars/bytes
+    // Total path = dbDir + "/" + filename (25 chars/bytes)
+    // Platform-specific limits: macOS = 104 bytes, Linux = 108 bytes
+    const maxPathLength = process.platform === 'darwin' ? 104 : 108;
+    const socketFilenameLength = 25; // "fdb-" + 16 hex chars + ".sock"
+    const separatorLength = 1; // "/"
+
+    // To exceed the limit, dbDir needs to be (maxPathLength - socketFilenameLength - separatorLength + 2)
+    const dbDirLengthToExceed = maxPathLength - socketFilenameLength - separatorLength + 2;
+    const pathToExceedLimit = '/a'.repeat(Math.floor(dbDirLengthToExceed / 2));
+
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathToExceedLimit,
+      });
+    }).toThrow(/Generated Unix socket path is too long/);
+
+    // Verify a path at exactly the limit doesn't throw
+    const dbDirLengthAtLimit = maxPathLength - socketFilenameLength - separatorLength;
+    const pathAtLimit = '/a'.repeat(Math.floor(dbDirLengthAtLimit / 2));
+    expect(() => {
+      new ConfigGenerator({
+        ...DEFAULTS,
+        dbDir: pathAtLimit,
+      });
+    }).not.toThrow();
   });
 });
