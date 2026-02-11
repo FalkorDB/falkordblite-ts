@@ -67,6 +67,9 @@ jobs:
       - name: Verify redis-server
         run: ./packages/${{ matrix.platform }}/bin/redis-server --version
 
+      - name: Update npm
+        run: npm install -g npm@latest
+
       - name: Set package version
         run: |
           cd "packages/${{ matrix.platform }}"
