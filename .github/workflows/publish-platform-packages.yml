@@ -83,4 +83,4 @@ jobs:
       - name: Publish
         run: |
           cd "packages/${{ matrix.platform }}"
-          npm publish --access public --provenance
+          npm publish --access public --tag next --provenance
