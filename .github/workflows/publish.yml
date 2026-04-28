@@ -44,5 +44,11 @@ jobs:
       - name: Clean platform-specific binaries before publish
         run: rm -rf bin/
 
+      - name: Set version from Git tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting version to $VERSION"
+          npm version "$VERSION" --no-git-tag-version
+
       - name: Publish to npm
-        run: npm publish
+        run: npm publish --provenance --access public
