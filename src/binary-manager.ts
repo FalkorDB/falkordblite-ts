@@ -11,7 +11,7 @@ import { get as httpGet } from 'node:http';
 // ---------------------------------------------------------------------------
 
 /** Default FalkorDB release version to download. */
-export const FALKORDB_VERSION = 'v4.16.3';
+export const FALKORDB_VERSION = 'v4.18.3';
 
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
@@ -38,7 +38,7 @@ export interface BinaryManagerOptions {
   falkordbModulePath?: string;
   /** Directory to store downloaded binaries. Defaults to &lt;package-root&gt;/bin. */
   binDir?: string;
-  /** FalkorDB GitHub release tag, e.g. "v4.16.3". */
+  /** FalkorDB GitHub release tag, e.g. "v4.18.3". */
   falkordbVersion?: string;
 }
 
