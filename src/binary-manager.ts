@@ -131,12 +131,18 @@ export class BinaryManager {
     return { redisServerPath, falkordbModulePath };
   }
 
-  /** Resolve redis-server path (no download). Throws if not found. */
+  /**
+   * Resolve redis-server path (no download).
+   * @throws {Error} If redis-server is not found in the configured path, packaged binaries, or system PATH.
+   */
   getRedisServerPath(): string {
     return this.resolveRedisServer();
   }
 
-  /** Resolve FalkorDB module path (no download). Throws if not found. */
+  /**
+   * Resolve FalkorDB module path (no download).
+   * @throws {Error} If the FalkorDB module is not found and cannot be resolved.
+   */
   getFalkorDBModulePath(): string {
     return this.resolveFalkorDBModule();
   }
