@@ -36,7 +36,7 @@ export interface BinaryManagerOptions {
   redisServerPath?: string;
   /** Custom path to a FalkorDB module (.so). Takes highest priority. */
   falkordbModulePath?: string;
-  /** Directory to store downloaded binaries. Defaults to &lt;package-root&gt;/bin. */
+  /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
   binDir?: string;
   /** FalkorDB GitHub release tag, e.g. "v4.18.3". */
   falkordbVersion?: string;
@@ -131,12 +131,18 @@ export class BinaryManager {
     return { redisServerPath, falkordbModulePath };
   }
 
-  /** Resolve redis-server path (no download). Throws if not found. */
+  /**
+   * Resolve redis-server path (no download).
+   * @throws {Error} If redis-server is not found in the configured path, packaged binaries, or system PATH.
+   */
   getRedisServerPath(): string {
     return this.resolveRedisServer();
   }
 
-  /** Resolve FalkorDB module path (no download). Throws if not found. */
+  /**
+   * Resolve FalkorDB module path (no download).
+   * @throws {Error} If the FalkorDB module is not found and cannot be resolved.
+   */
   getFalkorDBModulePath(): string {
     return this.resolveFalkorDBModule();
   }
@@ -329,8 +335,10 @@ function downloadFile(
       });
 
       file.on('error', (err) => {
-        unlink(destPath).catch(() => {});
-        reject(err);
+        file.close(() => {
+          unlink(destPath).catch(() => {});
+          reject(err);
+        });
       });
     });
 
