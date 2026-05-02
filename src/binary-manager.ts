@@ -36,7 +36,7 @@ export interface BinaryManagerOptions {
   redisServerPath?: string;
   /** Custom path to a FalkorDB module (.so). Takes highest priority. */
   falkordbModulePath?: string;
-  /** Directory to store downloaded binaries. Defaults to &lt;package-root&gt;/bin. */
+  /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
   binDir?: string;
   /** FalkorDB GitHub release tag, e.g. "v4.18.3". */
   falkordbVersion?: string;
