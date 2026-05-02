@@ -1,6 +1,7 @@
 # falkordblite
 
 [![CI](https://github.com/FalkorDB/falkordblite-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/FalkorDB/falkordblite-ts/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/FalkorDB/falkordblite-ts/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordblite-ts)
 [![npm version](https://img.shields.io/npm/v/falkordblite.svg)](https://www.npmjs.com/package/falkordblite)
 [![license](https://img.shields.io/github/license/falkordb/falkordblite-ts.svg)](https://github.com/falkordb/falkordblite-py)
 [![node](https://img.shields.io/node/v/falkordblite.svg)](package.json)
