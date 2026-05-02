@@ -329,8 +329,10 @@ function downloadFile(
       });
 
       file.on('error', (err) => {
-        unlink(destPath).catch(() => {});
-        reject(err);
+        file.close(() => {
+          unlink(destPath).catch(() => {});
+          reject(err);
+        });
       });
     });
 
