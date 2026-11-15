@@ -39,10 +39,10 @@
   "author": "FalkorDB",
   "license": "MIT",
   "dependencies": {
-    "falkordb": "^6.6.0"
+    "falkordb": "^7.0.1"
   },
   "peerDependencies": {
-    "falkordb": "^6.0.0"
+    "falkordb": "^7.0.1"
   },
   "peerDependenciesMeta": {
     "falkordb": {
