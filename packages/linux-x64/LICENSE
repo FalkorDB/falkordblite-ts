@@ -1,0 +1,29 @@
+LICENSE FOR THIS PACKAGE
+
+This package does NOT contain any MIT-licensed code. It only redistributes
+the following unmodified third-party binaries. Each binary is governed solely
+by its own license, as described below. Where a component is offered under
+more than one license, you (the licensee) may choose which of the offered
+licenses applies to your use.
+
+1. bin/redis-server - Redis Open Source (8.x)
+   Licensed, at the licensee's choice, under one of:
+     (a) the Redis Source Available License v2 (RSALv2);
+     (b) the Server Side Public License v1 (SSPLv1); or
+     (c) the GNU Affero General Public License v3 (AGPLv3).
+   Full texts of all three licenses: LICENSE-REDIS.txt
+
+2. bin/falkordb.so - FalkorDB module (v6.2.0 or later)
+   Licensed, at the licensee's choice, under one of:
+     (a) the Server Side Public License v1 (SSPL-1.0); or
+     (b) the GNU Affero General Public License v3 (AGPL-3.0-only).
+   FalkorDB license statement: LICENSE-FALKORDB
+   Full license texts:         LICENSE-FALKORDB-SSPL, LICENSE-FALKORDB-AGPL
+
+The exact bundled versions, copyright holders, corresponding source code
+locations and third-party notices are listed in NOTICE.
+
+The falkordblite TypeScript wrapper (the "falkordblite" npm package) is a
+separate work licensed under the MIT License; it runs redis-server as a
+separate process and communicates with it over a socket. Its MIT license
+does not apply to the contents of this package.

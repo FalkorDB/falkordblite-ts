@@ -1,12 +1,20 @@
 {
   "name": "@falkordblite/darwin-arm64",
   "version": "0.1.1",
-  "description": "FalkorDB + Redis pre-built binaries for macOS arm64",
+  "description": "Pre-built Redis (RSALv2/SSPLv1/AGPLv3) and FalkorDB (SSPLv1/AGPLv3) binaries for macOS arm64; see LICENSE",
   "os": ["darwin"],
   "cpu": ["arm64"],
   "main": "package.json",
-  "files": ["bin/"],
-  "license": "MIT",
+  "files": [
+    "bin/",
+    "LICENSE",
+    "LICENSE-REDIS.txt",
+    "LICENSE-FALKORDB",
+    "LICENSE-FALKORDB-SSPL",
+    "LICENSE-FALKORDB-AGPL",
+    "NOTICE"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/FalkorDB/falkordblite-ts"

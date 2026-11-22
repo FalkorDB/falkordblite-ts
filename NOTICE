@@ -1,0 +1,29 @@
+falkordblite
+Copyright (c) 2026 FalkorDB
+
+This package (the falkordblite TypeScript/JavaScript wrapper) is licensed
+under the MIT License; see LICENSE. It contains no Redis or FalkorDB
+binaries. It starts redis-server as a separate process and communicates
+with it over a Unix socket.
+
+The server binaries used by this package are obtained separately and are
+NOT covered by the MIT License:
+
+* The optional platform packages (@falkordblite/linux-x64,
+  @falkordblite/darwin-arm64) bundle:
+  - Redis (bin/redis-server), licensed under RSALv2, SSPLv1 or AGPLv3,
+    at the licensee's choice; and
+  - the FalkorDB module (bin/falkordb.so), licensed under SSPLv1 or
+    AGPLv3, at the licensee's choice.
+  See the LICENSE and NOTICE files shipped inside each platform package.
+
+* When no platform package is available, the postinstall script downloads
+  the FalkorDB module from https://github.com/FalkorDB/FalkorDB/releases.
+  It is licensed under SSPLv1 or AGPLv3, at the licensee's choice; see
+  https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.
+
+* A redis-server found on the system PATH is governed by the license under
+  which you obtained it.
+
+You are responsible for choosing and complying with the license that
+applies to your use of these components.

@@ -3,7 +3,7 @@
 [![CI](https://github.com/FalkorDB/falkordblite-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/FalkorDB/falkordblite-ts/actions/workflows/ci.yml)
 [![Coverage](https://codecov.io/gh/FalkorDB/falkordblite-ts/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordblite-ts)
 [![npm version](https://img.shields.io/npm/v/falkordblite.svg)](https://www.npmjs.com/package/falkordblite)
-[![license](https://img.shields.io/github/license/falkordb/falkordblite-ts.svg)](https://github.com/falkordb/falkordblite-py)
+[![license](https://img.shields.io/github/license/falkordb/falkordblite-ts.svg)](https://github.com/FalkorDB/falkordblite-ts/blob/main/LICENSE)
 [![node](https://img.shields.io/node/v/falkordblite.svg)](package.json)
 
 Embedded FalkorDB for Node.js/TypeScript. Zero-config graph database that runs
@@ -153,7 +153,25 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and fixes.
 Contributions are welcome. Please open an issue for major changes, and ensure
 `npm run lint && npm test && npm run build` passes before submitting a PR.
 
+When changing the bundled Redis or FalkorDB version, run
+`packages/update-license-files.sh <redis_version> <falkordb_version>` and update
+`LICENSE`, `NOTICE` and this README in the same PR.
+
 ## License
 
-This package is MIT licensed; see [LICENSE](LICENSE). The FalkorDB module is
-separately licensed under SSPLv1 or AGPLv3.
+falkordblite consists of components under different licenses. Where a
+component is offered under more than one license, you choose the license that
+applies to your use.
+
+| Component | Where it comes from | License |
+| --- | --- | --- |
+| falkordblite wrapper (this package) | `falkordblite` | MIT — see [LICENSE](LICENSE) |
+| Redis server (`redis-server`) | bundled in `@falkordblite/linux-x64` / `@falkordblite/darwin-arm64` | RSALv2, SSPLv1 or AGPLv3 (licensee's choice) — [full texts](https://github.com/redis/redis/blob/8.10.3/LICENSE.txt) |
+| FalkorDB module (`falkordb.so`, v6.2.0+) | bundled in the platform packages, or downloaded by `postinstall` | SSPLv1 or AGPLv3 (licensee's choice) — [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/v6.2.0/LICENSE), [SSPL](https://github.com/FalkorDB/FalkorDB/blob/v6.2.0/LICENSE-SSPL), [AGPL](https://github.com/FalkorDB/FalkorDB/blob/v6.2.0/LICENSE-AGPL) |
+
+The `falkordblite` package itself contains no Redis or FalkorDB binaries; it
+runs `redis-server` as a separate process and talks to it over a socket. Each
+platform package ships a `LICENSE`, the full license texts and a `NOTICE`
+listing the exact bundled versions and their source code. See also
+[NOTICE](NOTICE). A `redis-server` found on your `PATH` is governed by the
+license under which you obtained it.
