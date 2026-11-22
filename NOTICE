@@ -20,7 +20,7 @@ NOT covered by the MIT License:
 * When no platform package is available, the postinstall script downloads
   the FalkorDB module from https://github.com/FalkorDB/FalkorDB/releases.
   It is licensed under SSPLv1 or AGPLv3, at the licensee's choice; see
-  https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.
+  https://github.com/FalkorDB/FalkorDB/blob/main/LICENSE.
 
 * A redis-server found on the system PATH is governed by the license under
   which you obtained it.

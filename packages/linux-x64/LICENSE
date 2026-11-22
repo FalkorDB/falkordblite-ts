@@ -14,6 +14,8 @@ and copyright notices.
      (b) the Server Side Public License v1 (SSPLv1); or
      (c) the GNU Affero General Public License v3 (AGPLv3).
    Full texts of all three licenses: LICENSE-REDIS.txt
+   Portions from Redis 7.2 and earlier remain under BSD-3-Clause:
+     REDISCONTRIBUTIONS.txt
 
 2. bin/falkordb.so - FalkorDB module (v6.2.0 or later)
    Licensed, at the licensee's choice, under one of:
@@ -23,8 +25,8 @@ and copyright notices.
    Full license texts:         LICENSE-SSPL, LICENSE-AGPL
 
 The exact bundled versions and source locations are listed in NOTICE.
-THIRD-PARTY-NOTICES.txt reproduces notices for Redis's statically linked
-libraries and FalkorDB's pinned third-party dependencies.
+THIRD-PARTY-NOTICES.txt reproduces notices for Redis's embedded and
+statically linked components and FalkorDB's pinned third-party dependencies.
 
 The falkordblite TypeScript wrapper (the "falkordblite" npm package) is a
 separate work licensed under the MIT License; it runs redis-server as a

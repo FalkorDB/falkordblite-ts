@@ -6,11 +6,12 @@ bin/redis-server
   Component: Redis 8.10.3
   Copyright: Redis Ltd. and contributors
   License:   RSALv2, SSPLv1 or AGPLv3, at the licensee's choice
-             (full text: LICENSE-REDIS.txt)
+             (full text: LICENSE-REDIS.txt; BSD-3-Clause portions:
+             REDISCONTRIBUTIONS.txt)
   Source:    https://github.com/redis/redis/tree/8.10.3
   Archive:   https://github.com/redis/redis/archive/refs/tags/8.10.3.tar.gz
   Built from the source above with: make redis-server
-  Static dependency license texts and notices: THIRD-PARTY-NOTICES.txt
+  Embedded and static dependency notices: THIRD-PARTY-NOTICES.txt
 
 bin/falkordb.so
   Component: FalkorDB v6.2.0

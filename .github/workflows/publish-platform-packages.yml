@@ -27,6 +27,11 @@ jobs:
             platform: darwin-arm64
             falkordb_asset: falkordb-macos-arm64v8.so
     runs-on: ${{ matrix.os }}
+    env:
+      REDIS_VERSION: ${{ inputs.redis_version }}
+      FALKORDB_VERSION: ${{ inputs.falkordb_version }}
+      PLATFORM: ${{ matrix.platform }}
+      FALKORDB_ASSET: ${{ matrix.falkordb_asset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -34,50 +39,56 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      - name: Validate version inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "${REDIS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid redis_version: ${REDIS_VERSION}" >&2
+            exit 1
+          fi
+          if [[ ! "${FALKORDB_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid falkordb_version: ${FALKORDB_VERSION} (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+
       - name: Build Redis from source
         run: |
           set -euo pipefail
-          REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
+          REDIS_TARBALL="redis-${REDIS_VERSION}.tar.gz"
 
           curl --fail --location --silent --show-error \
             -o "${REDIS_TARBALL}" \
-            "https://github.com/redis/redis/archive/refs/tags/${{ inputs.redis_version }}.tar.gz"
+            "https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz"
 
           tar xzf "${REDIS_TARBALL}"
-          cd "redis-${{ inputs.redis_version }}"
+          cd "redis-${REDIS_VERSION}"
           make redis-server -j"$(getconf _NPROCESSORS_ONLN)"
-          mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
-          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
-          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
+          mkdir -p "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin"
+          cp src/redis-server "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin/"
+          chmod +x "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin/redis-server"
 
       - name: Download FalkorDB module
         run: |
           set -euo pipefail
-          FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
+          FALKORDB_DIR="packages/${PLATFORM}/bin"
           mkdir -p "${FALKORDB_DIR}"
           FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
-          FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
 
           curl --fail --location --silent --show-error \
             -o "${FALKORDB_SO}" \
-            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET}"
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${FALKORDB_VERSION}/${FALKORDB_ASSET}"
 
           chmod +x "${FALKORDB_SO}"
 
       - name: Verify redis-server
-        env:
-          EXPECTED_REDIS_VERSION: ${{ inputs.redis_version }}
         run: |
           set -euo pipefail
-          version="$(./packages/${{ matrix.platform }}/bin/redis-server --version)"
+          version="$(./packages/${PLATFORM}/bin/redis-server --version)"
           echo "$version"
-          [[ "$version" == "Redis server v=${EXPECTED_REDIS_VERSION} "* ]]
+          [[ "$version" == "Redis server v=${REDIS_VERSION} "* ]]
 
       - name: Generate license files and NOTICE
         env:
-          REDIS_VERSION: ${{ inputs.redis_version }}
-          FALKORDB_VERSION: ${{ inputs.falkordb_version }}
-          PLATFORM: ${{ matrix.platform }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -89,25 +100,30 @@ jobs:
 
       - name: Set package version
         run: |
-          cd "packages/${{ matrix.platform }}"
+          set -euo pipefail
+          cd "packages/${PLATFORM}"
           # Derive version from Redis and FalkorDB versions
           # Redis 8.10.3 + FalkorDB v6.2.0 -> 8.10.3-falkordb.6.2.0
-          FALKORDB_VERSION="${{ inputs.falkordb_version }}"
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
-          PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          PACKAGE_VERSION="${REDIS_VERSION}-falkordb.${FALKORDB_VERSION_CLEAN}"
           npm version "${PACKAGE_VERSION}" --no-git-tag-version
 
       - name: Verify package contents
         run: |
           set -euo pipefail
-          cd "packages/${{ matrix.platform }}"
+          cd "packages/${PLATFORM}"
           contents="$(npm pack --dry-run --json | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8"))[0]; console.log(p.files.map(f=>f.path).join("\n"))')"
           echo "$contents"
-          for f in bin/redis-server bin/falkordb.so LICENSE LICENSE-REDIS.txt LICENSE-FALKORDB LICENSE-SSPL LICENSE-AGPL LICENSE-FALKORDB-SSPL LICENSE-FALKORDB-AGPL THIRD-PARTY-NOTICES.txt NOTICE; do
+          for f in bin/redis-server bin/falkordb.so LICENSE LICENSE-REDIS.txt REDISCONTRIBUTIONS.txt LICENSE-FALKORDB LICENSE-SSPL LICENSE-AGPL LICENSE-FALKORDB-SSPL LICENSE-FALKORDB-AGPL THIRD-PARTY-NOTICES.txt NOTICE; do
             grep -qx "$f" <<<"$contents" || { echo "Missing $f in package"; exit 1; }
+          done
+          grep -q "Redis ${REDIS_VERSION}" NOTICE
+          grep -q "FalkorDB ${FALKORDB_VERSION}" NOTICE
+          for marker in "REDISCONTRIBUTIONS.txt" "Lua CJSON" "Lua BitOp" "Marc Alexander Lehmann" "libuv" "s2geometry" "ScalableVectorSearch"; do
+            grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing notice marker: $marker" >&2; exit 1; }
           done
 
       - name: Publish
         run: |
-          cd "packages/${{ matrix.platform }}"
+          cd "packages/${PLATFORM}"
           npm publish --access public --tag next --provenance
