@@ -235,13 +235,28 @@ describe('BinaryManager', () => {
       const bundledRedis = join(packageDir, 'bin', 'redis-server');
       await writeFile(bundledRedis, '');
       const systemRedis = jest.spyOn(IsolatedBinaryManager, 'findInSystemPath');
+      const versions = new Map<string, number[] | undefined>();
+      const redisVersion = jest.spyOn(IsolatedBinaryManager, 'getRedisVersion')
+        .mockImplementation((path) => versions.get(path));
       try {
+        const packaged = await realpath(bundledRedis);
         systemRedis.mockReturnValue(process.execPath);
+        versions.set(packaged, [8, 10, 3]);
+
+        versions.set(process.execPath, [8, 10, 3]);
         expect(upgraded.getRedisServerPath()).toBe(process.execPath);
+        versions.set(process.execPath, [9, 0, 0]);
+        expect(upgraded.getRedisServerPath()).toBe(process.execPath);
+        versions.set(process.execPath, [6, 2, 14]);
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
+        versions.set(process.execPath, undefined);
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
+
         systemRedis.mockReturnValue(undefined);
-        expect(upgraded.getRedisServerPath()).toBe(await realpath(bundledRedis));
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
       } finally {
         systemRedis.mockRestore();
+        redisVersion.mockRestore();
       }
     });
 
@@ -304,10 +319,12 @@ describe('BinaryManager', () => {
   describe('npm package resolution', () => {
     const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
 
-    (hasRedisInPath() ? it : it.skip)('prefers system Redis over the platform package', () => {
+    (hasRedisInPath() ? it : it.skip)('resolves a redis-server whose version can be read', () => {
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       const result = bm.getRedisServerPath();
-      expect(result).toBe(hasRedisInPath());
+      expect(BinaryManager.getRedisVersion(result)).toEqual([
+        expect.any(Number), expect.any(Number), expect.any(Number),
+      ]);
     });
 
     (hasRedisInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {

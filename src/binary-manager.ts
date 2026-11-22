@@ -115,6 +115,21 @@ export class BinaryManager {
     }
   }
 
+  /** Read a redis-server binary's version, e.g. [8, 10, 3]. Returns undefined if unknown. */
+  static getRedisVersion(redisServerPath: string): number[] | undefined {
+    try {
+      const output = execFileSync(redisServerPath, ['--version'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5_000,
+      });
+      const match = /\bv=(\d+)\.(\d+)\.(\d+)/.exec(output);
+      return match ? match.slice(1).map(Number) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Public API
   // -----------------------------------------------------------------------
@@ -123,7 +138,7 @@ export class BinaryManager {
    * Ensure all required binaries are available.
    *
    * - Downloads the FalkorDB module from GitHub if not already present.
-   * - Verifies redis-server is reachable (user path → bin/ → system PATH → platform package).
+   * - Verifies redis-server is reachable (user path → bin/ → newer of system PATH and platform package).
    *
    * Idempotent: skips downloads when the target file already exists.
    */
@@ -173,20 +188,32 @@ export class BinaryManager {
       // Platform detection failed — skip bin/ check, fall through to PATH.
     }
 
-    // Prefer the system Redis so installing a platform package does not downgrade it.
+    // 3. System PATH or platform package (@falkordblite/<platform>)
     const system = BinaryManager.findInSystemPath('redis-server');
-    if (system) return system;
-
-    // 4. Platform-specific npm package (@falkordblite/<platform>)
+    let packaged: string | undefined;
     try {
       const key = BinaryManager.detectPlatform();
       const pkgName = `@falkordblite/${key}`;
       const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
       const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
-      if (existsSync(npmBin)) return npmBin;
+      if (existsSync(npmBin)) packaged = npmBin;
     } catch {
       // Package not installed.
     }
+
+    // Use whichever is newer: an older system Redis may not load the module,
+    // and an older bundled Redis may not read data saved by the system Redis.
+    if (system && packaged) {
+      const systemVersion = BinaryManager.getRedisVersion(system);
+      const packagedVersion = BinaryManager.getRedisVersion(packaged);
+      if (!systemVersion) return packaged;
+      if (!packagedVersion || compareVersions(systemVersion, packagedVersion) >= 0) {
+        return system;
+      }
+      return packaged;
+    }
+    const found = system ?? packaged;
+    if (found) return found;
 
     throw new Error(
       'redis-server not found. Install it with:\n' +
@@ -307,6 +334,14 @@ export class BinaryManager {
 
     return targetPath;
   }
+}
+
+function compareVersions(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

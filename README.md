@@ -25,10 +25,12 @@ await db.close();
 npm install falkordblite
 ```
 
-The package prefers `redis-server` on your `PATH` over the pre-built Redis
-binary in the platform package, so installing an older bundle does not replace
-your system Redis. It uses a bundled FalkorDB module only when its release
-matches the configured version; otherwise, it downloads the requested module.
+The package uses the newer of `redis-server` on your `PATH` and the pre-built
+Redis binary in the platform package (the system binary wins ties), so an
+older system Redis does not block the module and an older bundle does not
+replace a newer system Redis. It uses a bundled FalkorDB module only when its
+release matches the configured version; otherwise, it downloads the requested
+module.
 
 The platform packages bundle Redis 8.10.3 and FalkorDB 6.2.0.
 
