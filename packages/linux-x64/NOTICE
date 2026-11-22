@@ -23,4 +23,5 @@ bin/falkordb.so
   Binary:    https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.0
   Dependency license texts and notices: THIRD-PARTY-NOTICES.txt
   Dependency revisions are pinned in:
+    https://github.com/FalkorDB/FalkorDB/tree/v6.2.0/Cargo.lock
     https://github.com/FalkorDB/FalkorDB/tree/v6.2.0/deps/native-deps.lock

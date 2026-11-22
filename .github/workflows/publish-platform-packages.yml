@@ -46,8 +46,18 @@ jobs:
             echo "Invalid redis_version: ${REDIS_VERSION}" >&2
             exit 1
           fi
+          IFS=. read -r redis_major _ _ <<<"${REDIS_VERSION}"
+          if (( redis_major < 8 )); then
+            echo "redis_version must be >= 8.0.0 (got ${REDIS_VERSION})" >&2
+            exit 1
+          fi
           if [[ ! "${FALKORDB_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid falkordb_version: ${FALKORDB_VERSION} (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+          IFS=. read -r fdb_major fdb_minor _ <<<"${FALKORDB_VERSION#v}"
+          if (( fdb_major < 6 || (fdb_major == 6 && fdb_minor < 2) )); then
+            echo "falkordb_version must be >= v6.2.0 (got ${FALKORDB_VERSION})" >&2
             exit 1
           fi
 
@@ -119,7 +129,20 @@ jobs:
           done
           grep -q "Redis ${REDIS_VERSION}" NOTICE
           grep -q "FalkorDB ${FALKORDB_VERSION}" NOTICE
-          for marker in "REDISCONTRIBUTIONS.txt" "Lua CJSON" "Lua BitOp" "Marc Alexander Lehmann" "libuv" "s2geometry" "ScalableVectorSearch"; do
+          for marker in \
+            "REDISCONTRIBUTIONS.txt" \
+            "Lua CJSON" \
+            "Lua BitOp" \
+            "Marc Alexander Lehmann" \
+            "libuv" \
+            "s2geometry" \
+            "ScalableVectorSearch" \
+            "FalkorDB Rust crate: rquickjs " \
+            "quickjs/LICENSE" \
+            "Fabrice Bellard" \
+            "FalkorDB Rust crate: lazy_static " \
+            "FalkorDB Rust crate: roaring "
+          do
             grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing notice marker: $marker" >&2; exit 1; }
           done
 

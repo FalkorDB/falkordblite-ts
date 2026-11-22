@@ -3,6 +3,7 @@
 #
 # Usage: packages/update-license-files.sh <redis_version> <falkordb_version> [platform...]
 # Example: packages/update-license-files.sh 8.10.3 v6.2.0
+# Requires: Redis >= 8.0.0, FalkorDB >= v6.2.0, curl, python3, and cargo.
 #
 # Must be re-run (and the result committed) whenever the bundled versions change.
 set -euo pipefail
@@ -25,12 +26,26 @@ if [[ ! "$FALKORDB_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+# Platform LICENSE documents Redis 8.x's RSALv2/SSPLv1/AGPLv3 tri-license.
+IFS=. read -r redis_major _ _ <<<"${REDIS_VERSION}"
+if (( redis_major < 8 )); then
+  echo "redis_version must be >= 8.0.0 (got $REDIS_VERSION)" >&2
+  exit 1
+fi
+
 # The dual SSPLv1/AGPLv3 license only applies to FalkorDB >= v6.2.0.
 IFS=. read -r fdb_major fdb_minor _ <<<"${FALKORDB_VERSION#v}"
 if (( fdb_major < 6 || (fdb_major == 6 && fdb_minor < 2) )); then
   echo "falkordb_version must be >= v6.2.0 (got $FALKORDB_VERSION)" >&2
   exit 1
 fi
+
+for required_cmd in curl python3 cargo; do
+  if ! command -v "${required_cmd}" >/dev/null 2>&1; then
+    echo "Missing required tool: ${required_cmd}" >&2
+    exit 1
+  fi
+done
 
 PACKAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ $# -gt 0 ]]; then
@@ -39,11 +54,28 @@ else
   PLATFORMS=(linux-x64 darwin-arm64)
 fi
 
-REDIS_RAW="https://raw.githubusercontent.com/redis/redis/${REDIS_VERSION}"
-FALKORDB_RAW="https://raw.githubusercontent.com/FalkorDB/FalkorDB/${FALKORDB_VERSION}"
+for platform in "${PLATFORMS[@]}"; do
+  if [[ ! "${platform}" =~ ^[a-z0-9-]+$ ]]; then
+    echo "Invalid platform name: ${platform}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${PACKAGES_DIR}/${platform}/package.json" ]]; then
+    echo "Unknown platform package: ${platform}" >&2
+    exit 1
+  fi
+  case "${platform}" in
+    linux-x64|darwin-arm64) ;;
+    *)
+      echo "Unsupported platform target mapping for: ${platform}" >&2
+      exit 1
+      ;;
+  esac
+done
+
 REDIS_TREE="https://github.com/redis/redis/tree/${REDIS_VERSION}"
 REDIS_ARCHIVE="https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz"
 FALKORDB_TREE="https://github.com/FalkorDB/FalkorDB/tree/${FALKORDB_VERSION}"
+FALKORDB_ARCHIVE="https://github.com/FalkorDB/FalkorDB/archive/refs/tags/${FALKORDB_VERSION}.tar.gz"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -53,27 +85,26 @@ fetch() {
 }
 
 fetch "${REDIS_ARCHIVE}" "$TMP_DIR/redis.tar.gz"
-fetch "${FALKORDB_RAW}/LICENSE" "$TMP_DIR/LICENSE-FALKORDB"
-fetch "${FALKORDB_RAW}/LICENSE-SSPL" "$TMP_DIR/LICENSE-SSPL"
-fetch "${FALKORDB_RAW}/LICENSE-AGPL" "$TMP_DIR/LICENSE-AGPL"
-fetch "${FALKORDB_RAW}/deps/native-deps.lock" "$TMP_DIR/native-deps.lock"
-cp "$TMP_DIR/LICENSE-SSPL" "$TMP_DIR/LICENSE-FALKORDB-SSPL"
-cp "$TMP_DIR/LICENSE-AGPL" "$TMP_DIR/LICENSE-FALKORDB-AGPL"
-
-THIRD_PARTY_NOTICES="$TMP_DIR/THIRD-PARTY-NOTICES.txt"
+fetch "${FALKORDB_ARCHIVE}" "$TMP_DIR/falkordb.tar.gz"
 
 REDIS_VERSION="$REDIS_VERSION" \
 FALKORDB_VERSION="$FALKORDB_VERSION" \
 REDIS_TREE="$REDIS_TREE" \
 TMP_DIR="$TMP_DIR" \
+PLATFORMS_CSV="$(IFS=,; echo "${PLATFORMS[*]}")" \
 python3 - <<'PY'
+from __future__ import annotations
+
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
 from pathlib import PurePosixPath
 import re
+import subprocess
 import tarfile
+import threading
 from urllib.parse import urljoin
 import urllib.request
 
@@ -81,18 +112,39 @@ redis_version = os.environ["REDIS_VERSION"]
 falkordb_version = os.environ["FALKORDB_VERSION"]
 redis_tree = os.environ["REDIS_TREE"]
 tmp_dir = os.environ["TMP_DIR"]
+platforms = [p for p in os.environ["PLATFORMS_CSV"].split(",") if p]
 github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+
+PLATFORM_TARGETS = {
+    "linux-x64": "x86_64-unknown-linux-gnu",
+    "darwin-arm64": "aarch64-apple-darwin",
+}
 
 COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.S)
 LEADING_CPP_COMMENTS_RE = re.compile(r"\A(?:\s*//[^\n]*\n)+")
 STANDALONE_LICENSE_RE = re.compile(
     r"(redistribution and use|permission is hereby granted|permission to use|"
     r"permission is granted|100% public domain|creativecommons\.org/publicdomain|"
-    r"author:\s+brad conte|same terms as perl itself)",
+    r"author:\s+brad conte|same terms as perl itself|apache license,?\s+version\s+2\.0|"
+    r"spdx-license-identifier)",
     re.I,
 )
-NOTICE_BASENAME_RE = re.compile(r"^(license|licence|copying|copyright|notice)([-_.].*)?$", re.I)
-TEXT_EXTENSIONS = {"", ".txt", ".md", ".rst", ".text", ".html"}
+NOTICE_BASENAME_RE = re.compile(
+    r"^(license|licence|copying|copyright|notice|unlicense)([-_.].*)?$", re.I
+)
+TEXT_EXTENSIONS = {
+    "",
+    ".txt",
+    ".md",
+    ".rst",
+    ".text",
+    ".html",
+    ".bsd-3-clause",
+    ".apache",
+    ".mit",
+    ".mpl",
+    ".isc",
+}
 
 
 def fetch_bytes(url: str, *, api: bool = False) -> bytes:
@@ -106,17 +158,66 @@ def fetch_bytes(url: str, *, api: bool = False) -> bytes:
         return resp.read()
 
 
-def append_notice(out, component: str, source: str, text: str) -> None:
+def format_notice(component: str, source: str, text: str) -> str:
     cleaned = text.strip("\r\n")
     if not cleaned:
         raise SystemExit(f"Empty notice text for {component} ({source})")
-    out.write(
+    return (
         "\n\n================================================================\n"
         f"{component}\n"
         f"Source: {source}\n"
         "================================================================\n\n"
         f"{cleaned}\n"
     )
+
+
+def maybe_annotate_malformed_agpl(rel_path: str, text: str) -> str:
+    basename = PurePosixPath(rel_path).name.lower()
+    if "agpl" not in basename:
+        return text
+    head_lines = "\n".join(text.splitlines()[:10])
+    # Upstream RedisAI/VectorSimilarity license/AGPLv3.txt has an AGPLv3 heading
+    # ("19 Nov 2007") followed by the GPLv3 body and GPLv3 Section 13 ("13. Use
+    # with the GNU Affero General Public License.") instead of AGPLv3 Section 13.
+    if (
+        "GNU AFFERO GENERAL PUBLIC LICENSE" in head_lines.upper()
+        and "13. Use with the GNU Affero General Public License." in text
+        and "13. Remote Network Interaction" not in text
+    ):
+        note = (
+            "[Note: This upstream file carries an AGPLv3 heading, but its body "
+            "reproduces the GNU General Public License v3 (including GPLv3 "
+            "Section 13) rather than the GNU Affero General Public License v3 "
+            "(AGPLv3 Section 13: Remote Network Interaction). The upstream file "
+            "is reproduced unchanged below. For the canonical AGPLv3 text, see "
+            "LICENSE-AGPL and LICENSE-REDIS.txt in this package.]\n\n"
+        )
+        return note + text
+    return text
+
+
+def safe_extract_tar_regular_files(tf: tarfile.TarFile, dest_dir: str) -> str:
+    real_dest = os.path.realpath(dest_dir)
+    roots: set[str] = set()
+    for member in tf.getmembers():
+        if not member.isfile():
+            continue
+        parts = PurePosixPath(member.name).parts
+        if not parts or ".." in parts or parts[0].startswith("/"):
+            raise SystemExit(f"Unsafe archive member path: {member.name}")
+        roots.add(parts[0])
+        target_path = os.path.realpath(os.path.join(real_dest, *parts))
+        if os.path.commonpath([real_dest, target_path]) != real_dest:
+            raise SystemExit(f"Archive path escapes destination: {member.name}")
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        extracted = tf.extractfile(member)
+        if extracted is None:
+            raise SystemExit(f"Unable to extract {member.name}")
+        with open(target_path, "wb") as out_f:
+            out_f.write(extracted.read())
+    if len(roots) != 1:
+        raise SystemExit(f"Expected single archive root directory, got: {sorted(roots)}")
+    return os.path.join(real_dest, next(iter(roots)))
 
 
 def extract_comment_notice(text: str, *, include_tail: bool = False) -> str:
@@ -162,16 +263,18 @@ def parse_gitmodules(text: str) -> dict[str, str]:
     return modules
 
 
-def resolve_github_repo(raw_url: str, parent_repo: str) -> str:
+def resolve_github_repo(raw_url: str, parent_repo: str | None = None) -> str:
     url = raw_url.strip()
     if url.startswith(("./", "../")):
+        if not parent_repo:
+            raise SystemExit(f"Cannot resolve relative URL without parent: {raw_url}")
         url = urljoin(f"https://github.com/{parent_repo}/", url)
     elif url.startswith("git@github.com:"):
         url = "https://github.com/" + url[len("git@github.com:") :]
     if url.endswith(".git"):
         url = url[:-4]
     url = url.rstrip("/")
-    match = re.fullmatch(r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", url)
+    match = re.match(r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)", url)
     if not match:
         raise SystemExit(f"Unsupported non-GitHub dependency URL: {raw_url}")
     return match.group(1)
@@ -181,261 +284,626 @@ def is_notice_path(rel_path: str) -> bool:
     p = PurePosixPath(rel_path)
     basename = p.name
     ext = p.suffix.lower() if "." in basename else ""
-    if ext not in TEXT_EXTENSIONS:
+    if ext not in TEXT_EXTENSIONS and not NOTICE_BASENAME_RE.match(basename):
+        return False
+    if ext in {".c", ".cc", ".cpp", ".h", ".hpp", ".rs", ".py", ".sh", ".toml", ".json", ".lock"}:
         return False
     if NOTICE_BASENAME_RE.match(basename):
         return True
     parent_parts = {part.lower() for part in p.parts[:-1]}
-    return bool(parent_parts & {"license", "licenses"})
+    return bool(parent_parts & {"license", "licenses"}) and ext in TEXT_EXTENSIONS
 
 
-with open(os.path.join(tmp_dir, "THIRD-PARTY-NOTICES.txt"), "w", encoding="utf-8") as notices_out:
-    notices_out.write(
-        "Third-party component notices for the binaries in this package\n\n"
-        "This file reproduces the upstream license and copyright notices for the\n"
-        f"third-party components included in Redis {redis_version} and FalkorDB\n"
-        f"{falkordb_version}. Source references are given with each notice.\n"
+def parse_cargo_lock_sources(lock_text: str) -> dict[tuple[str, str], str | None]:
+    out: dict[tuple[str, str], str | None] = {}
+    for block in lock_text.split("\n[[package]]\n")[1:]:
+        m_name = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
+        m_ver = re.search(r'^version\s*=\s*"([^"]+)"', block, re.M)
+        if not m_name or not m_ver:
+            continue
+        m_src = re.search(r'^source\s*=\s*"([^"]+)"', block, re.M)
+        out[(m_name.group(1), m_ver.group(1))] = m_src.group(1) if m_src else None
+    return out
+
+
+def resolve_cargo_runtime_crates(
+    workspace_dir: str, package_name: str, target_triple: str
+) -> dict[tuple[str, str], str]:
+    lock_path = os.path.join(workspace_dir, "Cargo.lock")
+    with open(lock_path, encoding="utf-8") as f:
+        lock_sources = parse_cargo_lock_sources(f.read())
+    output = subprocess.check_output(
+        [
+            "cargo",
+            "tree",
+            "-p",
+            package_name,
+            "--edges",
+            "normal,no-proc-macro",
+            "--target",
+            target_triple,
+            "--prefix",
+            "none",
+            "--locked",
+        ],
+        cwd=workspace_dir,
+        text=True,
     )
+    resolved: dict[tuple[str, str], str] = {}
+    for raw_line in output.splitlines():
+        parts = raw_line.strip().split()
+        if len(parts) < 2 or not parts[1].startswith("v"):
+            continue
+        key = (parts[0], parts[1][1:])
+        src = lock_sources.get(key)
+        if src is not None:
+            resolved[key] = src
+    if not resolved:
+        raise SystemExit(
+            f"cargo tree resolved zero external runtime crates for {package_name} ({target_triple})"
+        )
+    return resolved
 
-    # 1. Extract Redis license files, static deps, embedded Lua modules, and src/ notices.
-    with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_tf:
-        prefix = f"redis-{redis_version}/"
-        members_by_rel = {
-            m.name[len(prefix) :]: m
-            for m in redis_tf.getmembers()
-            if m.isfile() and m.name.startswith(prefix)
-        }
 
-        def read_redis_text(rel_path: str) -> str:
-            member = members_by_rel.get(rel_path)
-            if member is None:
-                raise SystemExit(f"Missing expected file in Redis archive: {rel_path}")
-            extracted = redis_tf.extractfile(member)
-            if extracted is None:
-                raise SystemExit(f"Unable to read file in Redis archive: {rel_path}")
-            return extracted.read().decode("utf-8", "replace")
+common_sections: list[str] = []
 
-        license_redis = read_redis_text("LICENSE.txt")
-        redis_contributions = read_redis_text("REDISCONTRIBUTIONS.txt")
-        with open(os.path.join(tmp_dir, "LICENSE-REDIS.txt"), "w", encoding="utf-8") as f:
-            f.write(license_redis)
-        with open(os.path.join(tmp_dir, "REDISCONTRIBUTIONS.txt"), "w", encoding="utf-8") as f:
-            f.write(redis_contributions)
+# 1. Extract Redis license files, dynamically discovered deps/*, embedded Lua modules, and src/.
+with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_tf:
+    prefix = f"redis-{redis_version}/"
+    members_by_rel = {
+        m.name[len(prefix) :]: m
+        for m in redis_tf.getmembers()
+        if m.isfile() and m.name.startswith(prefix)
+    }
 
-        append_notice(
-            notices_out,
+    def read_redis_text(rel_path: str) -> str:
+        member = members_by_rel.get(rel_path)
+        if member is None:
+            raise SystemExit(f"Missing expected file in Redis archive: {rel_path}")
+        extracted = redis_tf.extractfile(member)
+        if extracted is None:
+            raise SystemExit(f"Unable to read file in Redis archive: {rel_path}")
+        return extracted.read().decode("utf-8", "replace")
+
+    license_redis = read_redis_text("LICENSE.txt")
+    redis_contributions = read_redis_text("REDISCONTRIBUTIONS.txt")
+    with open(os.path.join(tmp_dir, "LICENSE-REDIS.txt"), "w", encoding="utf-8") as f:
+        f.write(license_redis)
+    with open(os.path.join(tmp_dir, "REDISCONTRIBUTIONS.txt"), "w", encoding="utf-8") as f:
+        f.write(redis_contributions)
+
+    common_sections.append(
+        format_notice(
             "Redis BSD-3-Clause contributions (REDISCONTRIBUTIONS.txt)",
             f"{redis_tree}/REDISCONTRIBUTIONS.txt",
             redis_contributions,
         )
+    )
 
-        # Static archives linked into redis-server in Redis src/Makefile.
-        redis_dep_files = [
-            ("lua", "deps/lua/COPYRIGHT"),
-            ("jemalloc", "deps/jemalloc/COPYING"),
-            ("hiredis", "deps/hiredis/COPYING"),
-            ("hdr_histogram", "deps/hdr_histogram/COPYING.txt"),
-            ("hdr_histogram", "deps/hdr_histogram/LICENSE.txt"),
-            ("fpconv", "deps/fpconv/LICENSE.txt"),
-            ("xxhash", "deps/xxhash/LICENSE"),
-            ("tre", "deps/tre/LICENSE"),
-        ]
-        for component, rel_path in redis_dep_files:
-            append_notice(
-                notices_out,
-                f"Redis dependency: {component} ({rel_path})",
-                f"{redis_tree}/{rel_path}",
-                read_redis_text(rel_path),
-            )
+    redis_dep_dirs = sorted(
+        {
+            PurePosixPath(rel_path).parts[1]
+            for rel_path in members_by_rel
+            if len(PurePosixPath(rel_path).parts) >= 3
+            and PurePosixPath(rel_path).parts[0] == "deps"
+        }
+    )
+    required_redis_deps = {"fpconv", "hdr_histogram", "hiredis", "jemalloc", "linenoise", "lua"}
+    missing_redis_deps = required_redis_deps - set(redis_dep_dirs)
+    if missing_redis_deps:
+        raise SystemExit(
+            f"Missing expected Redis deps/ directories: {sorted(missing_redis_deps)}"
+        )
 
-        # Embedded third-party modules compiled into deps/lua/src/liblua.a.
-        lua_embedded_files = [
-            ("lua (Lua CJSON)", "deps/lua/src/lua_cjson.c", False),
-            ("lua (Lua CJSON strbuf)", "deps/lua/src/strbuf.c", False),
-            ("lua (Lua CJSON strbuf)", "deps/lua/src/strbuf.h", False),
-            ("lua (Lua CJSON fpconv)", "deps/lua/src/fpconv.c", False),
-            ("lua (Lua BitOp)", "deps/lua/src/lua_bit.c", False),
-            ("lua (lua-cmsgpack)", "deps/lua/src/lua_cmsgpack.c", True),
-            ("lua (lua_struct)", "deps/lua/src/lua_struct.c", True),
-        ]
-        for component, rel_path, include_tail in lua_embedded_files:
-            notice_text = extract_comment_notice(
-                read_redis_text(rel_path), include_tail=include_tail
+    for dep_dir in redis_dep_dirs:
+        dep_prefix = f"deps/{dep_dir}/"
+        dep_notice_files = [
+            rel_path
+            for rel_path in sorted(members_by_rel)
+            if rel_path.startswith(dep_prefix)
+            and not any(
+                seg in {"test", "tests", "example", "examples", "bench", "benches"}
+                for seg in PurePosixPath(rel_path).parts[2:-1]
             )
-            if not notice_text:
-                raise SystemExit(f"Failed to extract notice from Redis {rel_path}")
-            append_notice(
-                notices_out,
+            and is_notice_path(rel_path)
+        ]
+        if dep_notice_files:
+            for rel_path in dep_notice_files:
+                common_sections.append(
+                    format_notice(
+                        f"Redis dependency: {dep_dir} ({rel_path})",
+                        f"{redis_tree}/{rel_path}",
+                        read_redis_text(rel_path),
+                    )
+                )
+        else:
+            seen_dep_snippets: set[str] = set()
+            for rel_path in sorted(members_by_rel):
+                if not rel_path.startswith(dep_prefix):
+                    continue
+                fname = PurePosixPath(rel_path).name
+                if fname.lower().startswith("readme"):
+                    readme_txt = read_redis_text(rel_path)
+                    if re.search(r"copyright|license", readme_txt, re.I):
+                        seen_dep_snippets.add(rel_path)
+                        common_sections.append(
+                            format_notice(
+                                f"Redis dependency: {dep_dir} ({rel_path})",
+                                f"{redis_tree}/{rel_path}",
+                                readme_txt,
+                            )
+                        )
+                elif rel_path.endswith((".c", ".h", ".hpp", ".cc", ".cpp")):
+                    snippet = extract_comment_notice(read_redis_text(rel_path))
+                    if snippet and snippet not in seen_dep_snippets:
+                        seen_dep_snippets.add(snippet)
+                        common_sections.append(
+                            format_notice(
+                                f"Redis dependency: {dep_dir} ({rel_path})",
+                                f"{redis_tree}/{rel_path}",
+                                snippet,
+                            )
+                        )
+            if not seen_dep_snippets:
+                raise SystemExit(
+                    f"No license or copyright notice found for Redis deps/{dep_dir}"
+                )
+
+    # Embedded third-party modules compiled into deps/lua/src/liblua.a.
+    lua_embedded_files = [
+        ("lua (Lua CJSON)", "deps/lua/src/lua_cjson.c", False),
+        ("lua (Lua CJSON strbuf)", "deps/lua/src/strbuf.c", False),
+        ("lua (Lua CJSON strbuf)", "deps/lua/src/strbuf.h", False),
+        ("lua (Lua CJSON fpconv)", "deps/lua/src/fpconv.c", False),
+        ("lua (Lua BitOp)", "deps/lua/src/lua_bit.c", False),
+        ("lua (lua-cmsgpack)", "deps/lua/src/lua_cmsgpack.c", True),
+        ("lua (lua_struct)", "deps/lua/src/lua_struct.c", True),
+    ]
+    for component, rel_path, include_tail in lua_embedded_files:
+        notice_text = extract_comment_notice(
+            read_redis_text(rel_path), include_tail=include_tail
+        )
+        if not notice_text:
+            raise SystemExit(f"Failed to extract notice from Redis {rel_path}")
+        common_sections.append(
+            format_notice(
                 f"Redis dependency: {component} ({rel_path})",
                 f"{redis_tree}/{rel_path}",
                 notice_text,
             )
+        )
 
-        # Third-party and permissive-licensed files compiled directly from Redis src/.
-        src_captured: set[str] = set()
-        for rel_path in sorted(members_by_rel):
-            if not rel_path.startswith("src/") or rel_path.startswith(
-                ("src/modules/", "src/commands/")
-            ):
-                continue
-            if not rel_path.endswith((".c", ".h")):
-                continue
-            raw_text = read_redis_text(rel_path)
-            if "Redis Source Available License" in "\n".join(raw_text.splitlines()[:120]):
-                continue
-            notice_text = extract_comment_notice(raw_text)
-            if not notice_text:
-                continue
-            src_captured.add(rel_path)
-            append_notice(
-                notices_out,
+    # Third-party and permissive-licensed files compiled directly from Redis src/.
+    src_captured: set[str] = set()
+    for rel_path in sorted(members_by_rel):
+        if not rel_path.startswith("src/") or rel_path.startswith(
+            ("src/modules/", "src/commands/")
+        ):
+            continue
+        if not rel_path.endswith((".c", ".h")):
+            continue
+        raw_text = read_redis_text(rel_path)
+        if "Redis Source Available License" in "\n".join(raw_text.splitlines()[:120]):
+            continue
+        notice_text = extract_comment_notice(raw_text)
+        if not notice_text:
+            continue
+        src_captured.add(rel_path)
+        common_sections.append(
+            format_notice(
                 f"Redis source component: {rel_path}",
                 f"{redis_tree}/{rel_path}",
                 notice_text,
             )
+        )
 
-        required_src = {
-            "src/lzf_c.c",
-            "src/lzf_d.c",
-            "src/pqsort.c",
-            "src/mt19937-64.c",
-            "src/fast_float_strtod.c",
-            "src/strl.c",
-        }
-        missing_src = required_src - src_captured
-        if missing_src:
-            raise SystemExit(f"Missing expected Redis src/ notices: {sorted(missing_src)}")
+    required_src = {
+        "src/lzf_c.c",
+        "src/lzf_d.c",
+        "src/pqsort.c",
+        "src/mt19937-64.c",
+        "src/strl.c",
+    }
+    missing_src = required_src - src_captured
+    if missing_src:
+        raise SystemExit(f"Missing expected Redis src/ notices: {sorted(missing_src)}")
+    if "src/fast_float_strtod.c" not in src_captured and "fast_float" not in redis_dep_dirs:
+        raise SystemExit("Missing fast_float notice in Redis src/ or deps/")
 
-    # 2. Parse FalkorDB native-deps.lock and recursively traverse submodules.
-    sections: dict[str, dict[str, str]] = {}
-    section = None
-    with open(os.path.join(tmp_dir, "native-deps.lock"), encoding="utf-8") as lock_in:
-        for raw_line in lock_in:
-            line = raw_line.strip()
-            if line.startswith("[") and line.endswith("]"):
-                section = line[1:-1]
-                sections[section] = {}
-            elif section and "=" in line:
-                key, value = (part.strip() for part in line.split("=", 1))
-                sections[section][key] = value
+# 2. Extract FalkorDB source archive, top-level licenses, LLVM libomp notice, and Cargo tree.
+falkordb_extract_parent = os.path.join(tmp_dir, "falkordb-src")
+os.makedirs(falkordb_extract_parent, exist_ok=True)
+with tarfile.open(os.path.join(tmp_dir, "falkordb.tar.gz"), mode="r:gz") as fdb_tf:
+    falkordb_src_root = safe_extract_tar_regular_files(fdb_tf, falkordb_extract_parent)
 
-    queue: deque[tuple[str, str, str]] = deque()
-    for dep_name in ("graphblas", "lagraph", "redisearch"):
-        dep = sections.get(dep_name, {})
-        rev = dep.get("rev", "").strip('"')
-        if not re.fullmatch(r"[0-9a-f]{40}", rev):
-            raise SystemExit(f"Missing or invalid {dep_name} revision in native-deps.lock")
-        repo = resolve_github_repo(dep.get("url", "").strip('"'), "FalkorDB/FalkorDB")
-        queue.append((dep_name, repo, rev))
+for src_name, dst_name in [
+    ("LICENSE", "LICENSE-FALKORDB"),
+    ("LICENSE-SSPL", "LICENSE-SSPL"),
+    ("LICENSE-AGPL", "LICENSE-AGPL"),
+    ("LICENSE-SSPL", "LICENSE-FALKORDB-SSPL"),
+    ("LICENSE-AGPL", "LICENSE-FALKORDB-AGPL"),
+]:
+    src_path = os.path.join(falkordb_src_root, src_name)
+    if not os.path.isfile(src_path):
+        raise SystemExit(f"Missing expected file in FalkorDB archive: {src_name}")
+    with open(src_path, "rb") as rf, open(os.path.join(tmp_dir, dst_name), "wb") as wf:
+        wf.write(rf.read())
 
-    visited: set[tuple[str, str]] = set()
-    while queue:
-        label, repo, rev = queue.popleft()
-        if (repo, rev) in visited:
+# Statically linked LLVM OpenMP runtime (libomp.a built via build/libomp.sh).
+if os.path.isfile(os.path.join(falkordb_src_root, "build", "libomp.sh")):
+    llvm_major = "23"
+    dockerfile_path = os.path.join(falkordb_src_root, "build", "runtime", "Dockerfile")
+    if os.path.isfile(dockerfile_path):
+        with open(dockerfile_path, encoding="utf-8") as df:
+            m_clang = re.search(r"clang\+\+-([0-9]+)", df.read())
+            if m_clang:
+                llvm_major = m_clang.group(1)
+    llvm_license_text = None
+    llvm_tag = f"llvmorg-{llvm_major}.1.0"
+    candidate_tags = [llvm_tag]
+    try:
+        refs = json.loads(
+            fetch_bytes(
+                f"https://api.github.com/repos/llvm/llvm-project/git/matching-refs/tags/llvmorg-{llvm_major}.",
+                api=True,
+            ).decode("utf-8")
+        )
+        ga_tags = sorted(
+            r["ref"].split("/")[-1]
+            for r in refs
+            if re.fullmatch(rf"llvmorg-{llvm_major}\.[0-9]+\.[0-9]+", r.get("ref", "").split("/")[-1])
+        )
+        if ga_tags:
+            candidate_tags = [ga_tags[-1]] + candidate_tags
+    except Exception:
+        pass
+    for tag_try in candidate_tags:
+        try:
+            llvm_license_text = fetch_bytes(
+                f"https://raw.githubusercontent.com/llvm/llvm-project/{tag_try}/openmp/LICENSE.TXT"
+            ).decode("utf-8", "replace")
+            llvm_tag = tag_try
+            break
+        except Exception:
             continue
-        visited.add((repo, rev))
+    if not llvm_license_text:
+        raise SystemExit(f"Unable to fetch LLVM openmp/LICENSE.TXT for clang++-{llvm_major}")
+    common_sections.append(
+        format_notice(
+            "FalkorDB static runtime dependency: LLVM OpenMP (libomp.a - openmp/LICENSE.TXT)",
+            f"https://github.com/llvm/llvm-project/blob/{llvm_tag}/openmp/LICENSE.TXT",
+            llvm_license_text,
+        )
+    )
 
-        archive_bytes = fetch_bytes(f"https://github.com/{repo}/archive/{rev}.tar.gz")
-        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as dep_tf:
-            members = [m for m in dep_tf.getmembers() if m.isfile()]
-            if not members:
-                raise SystemExit(f"Empty archive for {repo}@{rev}")
-            root_prefix = members[0].name.split("/", 1)[0] + "/"
-            rel_members = {
-                m.name[len(root_prefix) :]: m
-                for m in members
-                if m.name.startswith(root_prefix)
-            }
+# 3. Parse FalkorDB deps/native-deps.lock and recursively traverse C/C++ deps and submodules.
+sections: dict[str, dict[str, str]] = {}
+section = None
+with open(
+    os.path.join(falkordb_src_root, "deps", "native-deps.lock"), encoding="utf-8"
+) as lock_in:
+    for raw_line in lock_in:
+        line = raw_line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            sections[section] = {}
+        elif section and "=" in line:
+            key, value = (part.strip() for part in line.split("=", 1))
+            sections[section][key] = value
 
-            def read_dep_text(rel_path: str) -> str:
-                fobj = dep_tf.extractfile(rel_members[rel_path])
-                if fobj is None:
-                    raise SystemExit(f"Unable to read {rel_path} in {repo}@{rev}")
-                return fobj.read().decode("utf-8", "replace")
+queue: deque[tuple[str, str, str]] = deque()
+for dep_name in ("graphblas", "lagraph", "redisearch"):
+    dep = sections.get(dep_name, {})
+    rev = dep.get("rev", "").strip('"')
+    if not re.fullmatch(r"[0-9a-f]{40}", rev):
+        raise SystemExit(f"Missing or invalid {dep_name} revision in native-deps.lock")
+    repo = resolve_github_repo(dep.get("url", "").strip('"'), "FalkorDB/FalkorDB")
+    queue.append((dep_name, repo, rev))
 
-            notice_paths = [p for p in sorted(rel_members) if is_notice_path(p)]
-            if not notice_paths:
-                raise SystemExit(f"No text license or notice files found in {repo}@{rev}")
+redisearch_rust_workspace: str | None = None
+visited: set[tuple[str, str]] = set()
+while queue:
+    label, repo, rev = queue.popleft()
+    if (repo, rev) in visited:
+        continue
+    visited.add((repo, rev))
 
-            covered_dep_dirs: set[str] = set()
-            for rel_path in notice_paths:
-                parts = PurePosixPath(rel_path).parts
-                if len(parts) >= 2 and parts[0] == "deps":
-                    covered_dep_dirs.add(parts[1])
-                append_notice(
-                    notices_out,
+    archive_bytes = fetch_bytes(f"https://github.com/{repo}/archive/{rev}.tar.gz")
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as dep_tf:
+        if label == "redisearch":
+            rs_extract_parent = os.path.join(tmp_dir, "redisearch-src")
+            os.makedirs(rs_extract_parent, exist_ok=True)
+            rs_root = safe_extract_tar_regular_files(dep_tf, rs_extract_parent)
+            candidate_ws = os.path.join(rs_root, "src", "redisearch_rs")
+            if os.path.isfile(os.path.join(candidate_ws, "Cargo.lock")):
+                redisearch_rust_workspace = candidate_ws
+
+        members = [m for m in dep_tf.getmembers() if m.isfile()]
+        if not members:
+            raise SystemExit(f"Empty archive for {repo}@{rev}")
+        root_prefix = members[0].name.split("/", 1)[0] + "/"
+        rel_members = {
+            m.name[len(root_prefix) :]: m
+            for m in members
+            if m.name.startswith(root_prefix)
+        }
+
+        def read_dep_text(rel_path: str) -> str:
+            fobj = dep_tf.extractfile(rel_members[rel_path])
+            if fobj is None:
+                raise SystemExit(f"Unable to read {rel_path} in {repo}@{rev}")
+            return fobj.read().decode("utf-8", "replace")
+
+        notice_paths = [p for p in sorted(rel_members) if is_notice_path(p)]
+        if not notice_paths:
+            raise SystemExit(f"No text license or notice files found in {repo}@{rev}")
+
+        covered_dep_dirs: set[str] = set()
+        for rel_path in notice_paths:
+            parts = PurePosixPath(rel_path).parts
+            if len(parts) >= 2 and parts[0] == "deps":
+                covered_dep_dirs.add(parts[1])
+            dep_text = maybe_annotate_malformed_agpl(rel_path, read_dep_text(rel_path))
+            common_sections.append(
+                format_notice(
                     f"FalkorDB dependency: {label} ({rel_path})",
                     f"https://github.com/{repo}/blob/{rev}/{rel_path}",
-                    read_dep_text(rel_path),
+                    dep_text,
                 )
-
-            submodule_paths: set[str] = set()
-            if ".gitmodules" in rel_members:
-                gitmodules_map = parse_gitmodules(read_dep_text(".gitmodules"))
-                tree_data = json.loads(
-                    fetch_bytes(
-                        f"https://api.github.com/repos/{repo}/git/trees/{rev}?recursive=1",
-                        api=True,
-                    ).decode("utf-8")
-                )
-                if tree_data.get("truncated"):
-                    raise SystemExit(f"GitHub returned a truncated tree for {repo}@{rev}")
-                for entry in tree_data.get("tree", []):
-                    if entry.get("type") != "commit":
-                        continue
-                    sub_path = entry["path"]
-                    sub_sha = entry["sha"]
-                    if not re.fullmatch(r"[0-9a-f]{40}", sub_sha):
-                        raise SystemExit(f"Invalid submodule SHA for {repo}:{sub_path}")
-                    if sub_path not in gitmodules_map:
-                        raise SystemExit(
-                            f"Submodule {sub_path} in {repo}@{rev} missing from .gitmodules"
-                        )
-                    sub_repo = resolve_github_repo(gitmodules_map[sub_path], repo)
-                    submodule_paths.add(sub_path)
-                    queue.append((f"{label}/{sub_path}", sub_repo, sub_sha))
-
-            # Also capture embedded notices in vendored deps/<subdir>/ trees that have
-            # no standalone LICENSE/COPYING file (e.g. RediSearch fast_float, geohash, phonetics).
-            vendored_dirs = sorted(
-                {
-                    PurePosixPath(p).parts[1]
-                    for p in rel_members
-                    if len(PurePosixPath(p).parts) >= 3
-                    and PurePosixPath(p).parts[0] == "deps"
-                    and f"deps/{PurePosixPath(p).parts[1]}" not in submodule_paths
-                    and PurePosixPath(p).parts[1] not in covered_dep_dirs
-                }
             )
-            for vdir in vendored_dirs:
-                seen_Snippets: set[str] = set()
-                for rel_path in sorted(rel_members):
-                    if not rel_path.startswith(f"deps/{vdir}/"):
-                        continue
-                    fname = PurePosixPath(rel_path).name
-                    if fname.lower().startswith("readme"):
-                        readme_txt = read_dep_text(rel_path)
-                        if re.search(r"copyright|license", readme_txt, re.I):
-                            append_notice(
-                                notices_out,
+
+        submodule_paths: set[str] = set()
+        if ".gitmodules" in rel_members:
+            gitmodules_map = parse_gitmodules(read_dep_text(".gitmodules"))
+            tree_data = json.loads(
+                fetch_bytes(
+                    f"https://api.github.com/repos/{repo}/git/trees/{rev}?recursive=1",
+                    api=True,
+                ).decode("utf-8")
+            )
+            if tree_data.get("truncated"):
+                raise SystemExit(f"GitHub returned a truncated tree for {repo}@{rev}")
+            for entry in tree_data.get("tree", []):
+                if entry.get("type") != "commit":
+                    continue
+                sub_path = entry["path"]
+                sub_sha = entry["sha"]
+                if not re.fullmatch(r"[0-9a-f]{40}", sub_sha):
+                    raise SystemExit(f"Invalid submodule SHA for {repo}:{sub_path}")
+                if sub_path not in gitmodules_map:
+                    raise SystemExit(
+                        f"Submodule {sub_path} in {repo}@{rev} missing from .gitmodules"
+                    )
+                sub_repo = resolve_github_repo(gitmodules_map[sub_path], repo)
+                submodule_paths.add(sub_path)
+                queue.append((f"{label}/{sub_path}", sub_repo, sub_sha))
+
+        # Capture embedded notices in vendored deps/<subdir>/ trees that have
+        # no standalone LICENSE/COPYING file (e.g. RediSearch fast_float, geohash, phonetics).
+        vendored_dirs = sorted(
+            {
+                PurePosixPath(p).parts[1]
+                for p in rel_members
+                if len(PurePosixPath(p).parts) >= 3
+                and PurePosixPath(p).parts[0] == "deps"
+                and f"deps/{PurePosixPath(p).parts[1]}" not in submodule_paths
+                and PurePosixPath(p).parts[1] not in covered_dep_dirs
+            }
+        )
+        for vdir in vendored_dirs:
+            seen_snippets: set[str] = set()
+            for rel_path in sorted(rel_members):
+                if not rel_path.startswith(f"deps/{vdir}/"):
+                    continue
+                fname = PurePosixPath(rel_path).name
+                if fname.lower().startswith("readme"):
+                    readme_txt = read_dep_text(rel_path)
+                    if re.search(r"copyright|license", readme_txt, re.I):
+                        common_sections.append(
+                            format_notice(
                                 f"FalkorDB dependency: {label} ({rel_path})",
                                 f"https://github.com/{repo}/blob/{rev}/{rel_path}",
                                 readme_txt,
                             )
-                    elif rel_path.endswith((".c", ".h", ".hpp", ".cc", ".cpp")):
-                        src_txt = read_dep_text(rel_path)
-                        head120 = "\n".join(src_txt.splitlines()[:120])
-                        if "Redis Source Available License" in head120:
-                            continue
-                        snippet = extract_comment_notice(src_txt)
-                        if snippet and snippet not in seen_Snippets:
-                            seen_Snippets.add(snippet)
-                            append_notice(
-                                notices_out,
+                        )
+                elif rel_path.endswith((".c", ".h", ".hpp", ".cc", ".cpp")):
+                    src_txt = read_dep_text(rel_path)
+                    head120 = "\n".join(src_txt.splitlines()[:120])
+                    if "Redis Source Available License" in head120:
+                        continue
+                    snippet = extract_comment_notice(src_txt)
+                    if snippet and snippet not in seen_snippets:
+                        seen_snippets.add(snippet)
+                        common_sections.append(
+                            format_notice(
                                 f"FalkorDB dependency: {label} ({rel_path})",
                                 f"https://github.com/{repo}/blob/{rev}/{rel_path}",
                                 snippet,
                             )
+                        )
+
+# 4. Resolve per-platform Rust runtime Cargo dependencies (FalkorDB + RediSearch staticlib).
+per_platform_crates: dict[str, dict[tuple[str, str], str]] = {}
+all_needed_crates: dict[tuple[str, str, str], None] = {}
+
+for platform in platforms:
+    triple = PLATFORM_TARGETS[platform]
+    merged: dict[tuple[str, str], str] = {}
+    if redisearch_rust_workspace is not None:
+        merged.update(
+            resolve_cargo_runtime_crates(
+                redisearch_rust_workspace, "redisearch_rs", triple
+            )
+        )
+    merged.update(
+        resolve_cargo_runtime_crates(falkordb_src_root, "falkordb-rs", triple)
+    )
+    per_platform_crates[platform] = merged
+    for (crate_name, crate_ver), crate_src in merged.items():
+        all_needed_crates[(crate_name, crate_ver, crate_src)] = None
+
+github_repo_license_cache: dict[tuple[str, str], list[tuple[str, str]]] = {}
+github_repo_license_lock = threading.Lock()
+
+
+def fetch_github_repo_root_licenses(repo: str, ref: str) -> list[tuple[str, str]]:
+    cache_key = (repo, ref)
+    with github_repo_license_lock:
+        if cache_key in github_repo_license_cache:
+            return github_repo_license_cache[cache_key]
+    archive_bytes = fetch_bytes(f"https://github.com/{repo}/archive/{ref}.tar.gz")
+    found: list[tuple[str, str]] = []
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as gh_tf:
+        members = [m for m in gh_tf.getmembers() if m.isfile()]
+        if not members:
+            raise SystemExit(f"Empty archive for {repo}@{ref}")
+        root_prefix = members[0].name.split("/", 1)[0] + "/"
+        for m in sorted(members, key=lambda x: x.name):
+            if not m.name.startswith(root_prefix):
+                continue
+            rel = m.name[len(root_prefix) :]
+            if "/" in rel or not is_notice_path(rel):
+                continue
+            extracted = gh_tf.extractfile(m)
+            if extracted is not None:
+                found.append(
+                    (
+                        f"https://github.com/{repo}/blob/{ref}/{rel}",
+                        extracted.read().decode("utf-8", "replace"),
+                    )
+                )
+    with github_repo_license_lock:
+        github_repo_license_cache[cache_key] = found
+    return found
+
+
+def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str], list[str]]:
+    name, ver, src = item
+    rendered: list[str] = []
+
+    if src.startswith("git+"):
+        url_part, _, frag = src[len("git+") :].partition("#")
+        repo_url = url_part.split("?", 1)[0]
+        repo = resolve_github_repo(repo_url)
+        if not re.fullmatch(r"[0-9a-f]{40}", frag):
+            raise SystemExit(f"Invalid git commit fragment for crate {name} {ver}: {src}")
+        gh_lics = fetch_github_repo_root_licenses(repo, frag)
+        if not gh_lics:
+            raise SystemExit(f"No root license files found for git crate {name} {ver} ({repo}@{frag})")
+        for lic_url, lic_txt in gh_lics:
+            rendered.append(
+                format_notice(
+                    f"FalkorDB Rust crate: {name} {ver} (git {repo}@{frag[:12]})",
+                    lic_url,
+                    lic_txt,
+                )
+            )
+        return (item, rendered)
+
+    if not src.startswith("registry+"):
+        raise SystemExit(f"Unsupported Cargo package source for {name} {ver}: {src}")
+
+    crate_url = f"https://static.crates.io/crates/{name}/{name}-{ver}.crate"
+    crate_bytes = fetch_bytes(crate_url)
+    lic_expr = "unspecified"
+    repo_url: str | None = None
+    vcs_sha1: str | None = None
+    crate_notice_entries: list[tuple[str, str]] = []
+
+    with tarfile.open(fileobj=io.BytesIO(crate_bytes), mode="r:gz") as crate_tf:
+        crate_prefix = f"{name}-{ver}/"
+        for m in sorted(crate_tf.getmembers(), key=lambda x: x.name):
+            if not m.isfile() or not m.name.startswith(crate_prefix):
+                continue
+            rel = m.name[len(crate_prefix) :]
+            if rel == "Cargo.toml":
+                toml_txt = crate_tf.extractfile(m).read().decode("utf-8", "replace")
+                m_lic = re.search(r'^license\s*=\s*"([^"]+)"', toml_txt, re.M)
+                if m_lic:
+                    lic_expr = m_lic.group(1)
+                m_repo = re.search(r'^repository\s*=\s*"([^"]+)"', toml_txt, re.M)
+                if m_repo:
+                    repo_url = m_repo.group(1)
+            elif rel == ".cargo_vcs_info.json":
+                vcs_data = json.loads(
+                    crate_tf.extractfile(m).read().decode("utf-8", "replace")
+                )
+                sha_candidate = vcs_data.get("git", {}).get("sha1", "")
+                if re.fullmatch(r"[0-9a-f]{40}", sha_candidate):
+                    vcs_sha1 = sha_candidate
+            elif (
+                is_notice_path(rel)
+                and not rel.startswith(("tests/", "benches/", "examples/"))
+                and not rel.startswith("vendor/wasi-libc/")
+            ):
+                extracted = crate_tf.extractfile(m)
+                if extracted is not None:
+                    crate_notice_entries.append(
+                        (rel, extracted.read().decode("utf-8", "replace"))
+                    )
+
+    has_root_notice = any("/" not in rel for rel, _ in crate_notice_entries)
+    if not has_root_notice and repo_url:
+        gh_repo = resolve_github_repo(repo_url)
+        refs_to_try = [vcs_sha1] if vcs_sha1 else [f"v{ver}", ver, "HEAD"]
+        gh_lics: list[tuple[str, str]] = []
+        for candidate_ref in refs_to_try:
+            if not candidate_ref:
+                continue
+            try:
+                gh_lics = fetch_github_repo_root_licenses(gh_repo, candidate_ref)
+                if gh_lics:
+                    break
+            except Exception:
+                continue
+        for lic_url, lic_txt in gh_lics:
+            rendered.append(
+                format_notice(
+                    f"FalkorDB Rust crate: {name} {ver} [Declared license: {lic_expr}]",
+                    lic_url,
+                    lic_txt,
+                )
+            )
+
+    for rel, txt in crate_notice_entries:
+        rendered.append(
+            format_notice(
+                f"FalkorDB Rust crate: {name} {ver} ({rel}) [Declared license: {lic_expr}]",
+                f"https://crates.io/crates/{name}/{ver} ({crate_url})",
+                txt,
+            )
+        )
+
+    if not rendered:
+        raise SystemExit(
+            f"No license texts found in .crate or upstream repository for {name} {ver}"
+        )
+    return (item, rendered)
+
+
+with ThreadPoolExecutor(max_workers=16) as executor:
+    crate_notice_map = dict(
+        executor.map(fetch_crate_notices, sorted(all_needed_crates.keys()))
+    )
+
+for platform in platforms:
+    triple = PLATFORM_TARGETS[platform]
+    out_path = os.path.join(tmp_dir, f"THIRD-PARTY-NOTICES.{platform}.txt")
+    with open(out_path, "w", encoding="utf-8") as notices_out:
+        notices_out.write(
+            "Third-party component notices for the binaries in this package\n\n"
+            "This file reproduces the upstream license and copyright notices for the\n"
+            f"third-party components included in Redis {redis_version} and FalkorDB\n"
+            f"{falkordb_version} (target {triple}). Source references are given with\n"
+            "each notice.\n"
+        )
+        for sec in common_sections:
+            notices_out.write(sec)
+        for (crate_name, crate_ver), crate_src in sorted(
+            per_platform_crates[platform].items()
+        ):
+            for sec in crate_notice_map[(crate_name, crate_ver, crate_src)]:
+                notices_out.write(sec)
 PY
 
 # Sanity-check that the fetched and generated texts match what LICENSE describes.
@@ -445,10 +913,19 @@ grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$TMP_DIR/LICENSE-REDIS.txt"
 grep -q "BSD-3-Clause License" "$TMP_DIR/REDISCONTRIBUTIONS.txt"
 grep -q "Server Side Public License" "$TMP_DIR/LICENSE-SSPL"
 grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$TMP_DIR/LICENSE-AGPL"
-grep -q "Lua CJSON" "$THIRD_PARTY_NOTICES"
-grep -q "Lua BitOp" "$THIRD_PARTY_NOTICES"
-grep -q "Marc Alexander Lehmann" "$THIRD_PARTY_NOTICES"
-grep -q "libuv" "$THIRD_PARTY_NOTICES"
+
+for platform in "${PLATFORMS[@]}"; do
+  notices_file="$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt"
+  grep -q "Lua CJSON" "$notices_file"
+  grep -q "Lua BitOp" "$notices_file"
+  grep -q "Marc Alexander Lehmann" "$notices_file"
+  grep -q "libuv" "$notices_file"
+  grep -q "FalkorDB Rust crate: rquickjs " "$notices_file"
+  grep -q "quickjs/LICENSE" "$notices_file"
+  grep -q "Fabrice Bellard" "$notices_file"
+  grep -q "FalkorDB Rust crate: lazy_static " "$notices_file"
+  grep -q "FalkorDB Rust crate: roaring " "$notices_file"
+done
 
 cat >"$TMP_DIR/NOTICE" <<EOF
 This package redistributes third-party software in binary form. The MIT
@@ -476,22 +953,16 @@ bin/falkordb.so
   Binary:    https://github.com/FalkorDB/FalkorDB/releases/tag/${FALKORDB_VERSION}
   Dependency license texts and notices: THIRD-PARTY-NOTICES.txt
   Dependency revisions are pinned in:
+    ${FALKORDB_TREE}/Cargo.lock
     ${FALKORDB_TREE}/deps/native-deps.lock
 EOF
 
 for platform in "${PLATFORMS[@]}"; do
-  if [[ ! "${platform}" =~ ^[a-z0-9-]+$ ]]; then
-    echo "Invalid platform name: ${platform}" >&2
-    exit 1
-  fi
   dest="${PACKAGES_DIR}/${platform}"
-  if [[ ! -f "${dest}/package.json" ]]; then
-    echo "Unknown platform package: ${platform}" >&2
-    exit 1
-  fi
   cp "$TMP_DIR"/LICENSE-REDIS.txt "$TMP_DIR"/REDISCONTRIBUTIONS.txt \
     "$TMP_DIR"/LICENSE-FALKORDB "$TMP_DIR"/LICENSE-SSPL "$TMP_DIR"/LICENSE-AGPL \
     "$TMP_DIR"/LICENSE-FALKORDB-SSPL "$TMP_DIR"/LICENSE-FALKORDB-AGPL \
-    "$THIRD_PARTY_NOTICES" "$TMP_DIR"/NOTICE "$dest/"
+    "$TMP_DIR"/NOTICE "$dest/"
+  cp "$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt" "${dest}/THIRD-PARTY-NOTICES.txt"
   echo "Updated license files in ${dest}"
 done
