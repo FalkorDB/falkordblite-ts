@@ -10,7 +10,7 @@ import { BinaryManager, type BinaryPaths } from '../src/binary-manager';
 let cachedPaths: BinaryPaths | undefined;
 
 /**
- * Resolve redis-server and falkordb.so paths for tests.
+ * Resolve valkey-server and falkordb.so paths for tests.
  * Result is cached — first call may download the module, subsequent calls
  * are instant.
  */

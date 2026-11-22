@@ -7,9 +7,9 @@ import { existsSync } from 'node:fs';
 import { registerServer, unregisterServer } from './cleanup.js';
 
 export interface ServerManagerOptions {
-  /** Absolute path to the redis-server binary. */
-  redisServerPath: string;
-  /** Generated redis.conf content. */
+  /** Absolute path to the valkey-server binary. */
+  valkeyServerPath: string;
+  /** Generated valkey.conf content. */
   config: string;
   /** Path to the Unix socket (must match the config). */
   socketPath: string;
@@ -19,7 +19,7 @@ export interface ServerManagerOptions {
   startupTimeoutMs?: number;
   /** Interval between PING polls in milliseconds. Defaults to 100. */
   pollIntervalMs?: number;
-  /** If true, pipe redis-server stdout/stderr to the parent process. */
+  /** If true, pipe valkey-server stdout/stderr to the parent process. */
   inheritStdio?: boolean;
 }
 
@@ -33,7 +33,7 @@ export class ServerManager {
     this.options = options;
   }
 
-  /** Start the redis-server child process and wait until it's ready. */
+  /** Start the valkey-server child process and wait until it's ready. */
   async start(): Promise<void> {
     // Clean up a stale socket from a previous run if it exists.
     if (existsSync(this.options.socketPath)) {
@@ -47,13 +47,13 @@ export class ServerManager {
       this.ownsConfigFile = false;
     } else {
       const tmpDir = await mkdtemp(join(tmpdir(), 'falkordblite-'));
-      this.configFilePath = join(tmpDir, 'redis.conf');
+      this.configFilePath = join(tmpDir, 'valkey.conf');
       await writeFile(this.configFilePath, this.options.config, 'utf-8');
       this.ownsConfigFile = true;
     }
 
-    // Spawn redis-server.
-    const child = spawn(this.options.redisServerPath, [this.configFilePath], {
+    // Spawn valkey-server.
+    const child = spawn(this.options.valkeyServerPath, [this.configFilePath], {
       stdio: this.options.inheritStdio
         ? 'inherit'
         : ['ignore', 'pipe', 'pipe'],
@@ -62,7 +62,7 @@ export class ServerManager {
     this.process = child;
 
     // Collect stdout and stderr for error reporting.
-    // Redis logs errors (including module load failures) to stdout.
+    // Valkey logs errors (including module load failures) to stdout.
     let stdout = '';
     let stderr = '';
     if (child.stdout) {
@@ -80,20 +80,20 @@ export class ServerManager {
     const earlyExit = new Promise<never>((_, reject) => {
       child.on('error', (err) => {
         reject(
-          new Error(`Failed to spawn redis-server: ${err.message}`),
+          new Error(`Failed to spawn valkey-server: ${err.message}`),
         );
       });
       child.on('exit', (code, signal) => {
         if (code !== null && code !== 0) {
           reject(
             new Error(
-              `redis-server exited with code ${code} before becoming ready.\nstdout: ${stdout}\nstderr: ${stderr}`,
+              `valkey-server exited with code ${code} before becoming ready.\nstdout: ${stdout}\nstderr: ${stderr}`,
             ),
           );
         } else if (signal) {
           reject(
             new Error(
-              `redis-server was killed by signal ${signal} before becoming ready.`,
+              `valkey-server was killed by signal ${signal} before becoming ready.`,
             ),
           );
         }
@@ -127,7 +127,7 @@ export class ServerManager {
   }
 
   /**
-   * Stop the redis-server gracefully, falling back to SIGTERM/SIGKILL.
+   * Stop the valkey-server gracefully, falling back to SIGTERM/SIGKILL.
    * @param save If true, persist data to disk before shutting down (SHUTDOWN SAVE).
    */
   async stop(save = false): Promise<void> {
@@ -202,7 +202,7 @@ export class ServerManager {
 
       const onAbort = () => {
         cleanup();
-        reject(new Error('redis-server startup aborted'));
+        reject(new Error('valkey-server startup aborted'));
       };
 
       if (signal) {
@@ -219,7 +219,7 @@ export class ServerManager {
           cleanup();
           reject(
             new Error(
-              `redis-server did not become ready within ${timeoutMs}ms`,
+              `valkey-server did not become ready within ${timeoutMs}ms`,
             ),
           );
           return;

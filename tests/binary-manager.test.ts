@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { platform, arch } from 'node:os';
 import { BinaryManager, FALKORDB_VERSION } from '../src/binary-manager';
-import { cleanupAll } from './helpers';
+import { cleanupAll, makeTempDir } from './helpers';
 
 afterAll(async () => {
   await cleanupAll();
@@ -29,9 +31,9 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('findInSystemPath', () => {
-    it('finds redis-server on the system PATH if installed', () => {
-      const result = BinaryManager.findInSystemPath('redis-server');
-      // redis-server may not be installed in CI/test environments
+    it('finds valkey-server on the system PATH if installed', () => {
+      const result = BinaryManager.findInSystemPath('valkey-server');
+      // valkey-server may not be installed in CI/test environments
       if (result) {
         expect(typeof result).toBe('string');
       }
@@ -60,19 +62,19 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('path resolution priority', () => {
-    it('user-provided redis-server path takes highest priority', () => {
-      const systemPath = BinaryManager.findInSystemPath('redis-server');
+    it('user-provided valkey-server path takes highest priority', () => {
+      const systemPath = BinaryManager.findInSystemPath('valkey-server');
       if (!systemPath) return; // skip if not installed
 
-      const bm = new BinaryManager({ redisServerPath: systemPath });
-      expect(bm.getRedisServerPath()).toBe(systemPath);
+      const bm = new BinaryManager({ valkeyServerPath: systemPath });
+      expect(bm.getValkeyServerPath()).toBe(systemPath);
     });
 
-    it('throws when user-provided redis-server path does not exist', () => {
+    it('throws when user-provided valkey-server path does not exist', () => {
       const bm = new BinaryManager({
-        redisServerPath: '/nonexistent/redis-server',
+        valkeyServerPath: '/nonexistent/valkey-server',
       });
-      expect(() => bm.getRedisServerPath()).toThrow('not found at');
+      expect(() => bm.getValkeyServerPath()).toThrow('not found at');
     });
 
     it('user-provided falkordb module path takes highest priority', () => {
@@ -96,11 +98,22 @@ describe('BinaryManager', () => {
       expect(() => bm.getFalkorDBModulePath()).toThrow('not found at');
     });
 
-    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+    const hasValkeyInPath = () => BinaryManager.findInSystemPath('valkey-server');
 
-    (hasRedisInPath() ? it : it.skip)('falls back to system PATH for redis-server when binDir is empty', () => {
+    it('resolves valkey-server from the package-local bin directory', async () => {
+      const binDir = await makeTempDir();
+      const platformDir = join(binDir, BinaryManager.detectPlatform());
+      const valkeyServerPath = join(platformDir, 'valkey-server');
+      await mkdir(platformDir, { recursive: true });
+      await writeFile(valkeyServerPath, '');
+
+      const bm = new BinaryManager({ binDir });
+      expect(bm.getValkeyServerPath()).toBe(valkeyServerPath);
+    });
+
+    (hasValkeyInPath() ? it : it.skip)('falls back to system PATH for valkey-server when binDir is empty', () => {
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
-      const result = bm.getRedisServerPath();
+      const result = bm.getValkeyServerPath();
       expect(result).toBeDefined();
       expect(existsSync(result)).toBe(true);
     });
@@ -120,24 +133,24 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('ensureBinaries', () => {
-    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+    const hasValkeyInPath = () => BinaryManager.findInSystemPath('valkey-server');
 
-    (hasRedisInPath() ? it : it.skip)('returns valid paths for both binaries', async () => {
+    (hasValkeyInPath() ? it : it.skip)('returns valid paths for both binaries', async () => {
       const bm = new BinaryManager();
       const paths = await bm.ensureBinaries();
 
-      expect(paths.redisServerPath).toBeDefined();
+      expect(paths.valkeyServerPath).toBeDefined();
       expect(paths.falkordbModulePath).toBeDefined();
-      expect(existsSync(paths.redisServerPath)).toBe(true);
+      expect(existsSync(paths.valkeyServerPath)).toBe(true);
       expect(existsSync(paths.falkordbModulePath)).toBe(true);
     });
 
-    (hasRedisInPath() ? it : it.skip)('is idempotent — second call returns same paths instantly', async () => {
+    (hasValkeyInPath() ? it : it.skip)('is idempotent — second call returns same paths instantly', async () => {
       const bm = new BinaryManager();
       const first = await bm.ensureBinaries();
       const second = await bm.ensureBinaries();
 
-      expect(first.redisServerPath).toBe(second.redisServerPath);
+      expect(first.valkeyServerPath).toBe(second.valkeyServerPath);
       expect(first.falkordbModulePath).toBe(second.falkordbModulePath);
     });
   });
@@ -147,19 +160,19 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('npm package resolution', () => {
-    const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
+    const hasValkeyInPath = () => BinaryManager.findInSystemPath('valkey-server');
 
-    (hasRedisInPath() ? it : it.skip)('attempts to resolve redis-server from npm package before system PATH', () => {
+    (hasValkeyInPath() ? it : it.skip)('attempts to resolve valkey-server from npm package before system PATH', () => {
       // This test verifies the resolution order without requiring the npm package
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
-      const result = bm.getRedisServerPath();
+      const result = bm.getValkeyServerPath();
       
-      // Should find redis-server either from npm package or system PATH
+      // Should find valkey-server either from npm package or system PATH
       expect(result).toBeDefined();
       expect(existsSync(result)).toBe(true);
     });
 
-    (hasRedisInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {
+    (hasValkeyInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {
       // This test verifies that ensureFalkorDBModule checks npm packages first
       const bm = new BinaryManager();
       const paths = await bm.ensureBinaries();
@@ -187,12 +200,12 @@ describe('BinaryManager', () => {
       expect(bm.getFalkorDBModulePath()).toBe(modulePath);
     });
 
-    (hasRedisInPath() ? it : it.skip)('gracefully falls back when npm package is not installed', () => {
+    (hasValkeyInPath() ? it : it.skip)('gracefully falls back when npm package is not installed', () => {
       // With a nonexistent binDir and no npm package, should fall back to system PATH
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       
-      // Should not throw and find redis-server from system PATH
-      expect(() => bm.getRedisServerPath()).not.toThrow();
+      // Should not throw and find valkey-server from system PATH
+      expect(() => bm.getValkeyServerPath()).not.toThrow();
     });
   });
 });

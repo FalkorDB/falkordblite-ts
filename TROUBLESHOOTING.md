@@ -2,20 +2,20 @@
 
 ## Binary not found
 
-**redis-server not found**
+**valkey-server not found**
 
-The package now includes pre-built `redis-server` binaries for supported platforms
+The package now includes pre-built `valkey-server` binaries for supported platforms
 (Linux x64, macOS arm64). If the binary is not found:
 
 - Ensure you're on a supported platform
 - If using `--no-optional` during install, the platform-specific packages may not
   have been installed. Re-run `npm install` without that flag
-- Install Redis on your system as a fallback:
-  - Ubuntu/Debian: `sudo apt install redis-server`
-  - macOS: `brew install redis`
+- Install Valkey on your system as a fallback:
+  - Ubuntu/Debian: `sudo apt install valkey-server`
+  - macOS: `brew install valkey`
 - Or pass a custom path:
   ```ts
-  const db = await FalkorDB.open({ redisServerPath: '/path/to/redis-server' });
+  const db = await FalkorDB.open({ valkeyServerPath: '/path/to/valkey-server' });
   ```
 
 **FalkorDB module not found**
@@ -42,7 +42,7 @@ If the module is not found:
 
 - Ensure the binaries are executable:
   ```bash
-  chmod +x /path/to/redis-server /path/to/falkordb.so
+  chmod +x /path/to/valkey-server /path/to/falkordb.so
   ```
 - Confirm the data directory and temp directory are writable by your user.
 

@@ -18,7 +18,7 @@ export interface ConfigGeneratorOptions {
   logLevel?: 'debug' | 'verbose' | 'notice' | 'warning';
   /** Log file path. Empty string means stdout. */
   logFile?: string;
-  /** Extra redis.conf key-value pairs. */
+  /** Extra valkey.conf key-value pairs. */
   additionalConfig?: Record<string, string>;
 }
 
@@ -61,7 +61,7 @@ export class ConfigGenerator {
     return this.socketPath;
   }
 
-  /** Generate the full redis.conf content. */
+  /** Generate the full valkey.conf content. */
   generate(): string {
     const lines: string[] = [];
 

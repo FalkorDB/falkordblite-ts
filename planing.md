@@ -4,7 +4,7 @@
 
 ## Overview
 
-**FalkorDBLite-TS** (`falkordblite-ts`) mirrors the Python [FalkorDBLite](https://github.com/falkordb/falkordblite) project, providing a zero-config embedded FalkorDB graph database for Node.js. It spawns a `redis-server` + `falkordb.so` sub-process, communicates over a Unix domain socket (or named pipe on Windows), and exposes the same API as [`falkordb-ts`](https://github.com/FalkorDB/falkordb-ts) so users can migrate to a remote server by changing a single line of code.
+**FalkorDBLite-TS** (`falkordblite-ts`) mirrors the Python [FalkorDBLite](https://github.com/falkordb/falkordblite) project, providing a zero-config embedded FalkorDB graph database for Node.js. It spawns a `valkey-server` + `falkordb.so` sub-process, communicates over a Unix domain socket (or named pipe on Windows), and exposes the same API as [`falkordb-ts`](https://github.com/FalkorDB/falkordb-ts) so users can migrate to a remote server by changing a single line of code.
 
 ### Target User Experience
 
@@ -40,23 +40,23 @@ await db.close();
 │  │   - list() / info()                        │   │
 │  ├────────────────────────────────────────────┤   │
 │  │ ServerManager                              │   │
-│  │   - spawn redis-server child process       │   │
+│  │   - spawn valkey-server child process      │   │
 │  │   - configure Unix socket / named pipe     │   │
 │  │   - health checks & graceful shutdown      │   │
 │  ├────────────────────────────────────────────┤   │
 │  │ BinaryManager                              │   │
-│  │   - locate/download redis-server binary    │   │
+│  │   - locate/download valkey-server binary   │   │
 │  │   - locate/download falkordb.so module     │   │
 │  │   - platform detection (linux/mac/win)     │   │
 │  ├────────────────────────────────────────────┤   │
 │  │ ConfigGenerator                            │   │
-│  │   - generate redis.conf                    │   │
+│  │   - generate valkey.conf                   │   │
 │  │   - Unix socket path, persistence, etc.    │   │
 │  └────────────────────────────────────────────┘   │
 │         │  Unix Domain Socket / Named Pipe        │
 │         ▼                                          │
 │  ┌────────────────────────────────────────────┐   │
-│  │ redis-server (child process)               │   │
+│  │ valkey-server (child process)              │   │
 │  │   --loadmodule falkordb.so                 │   │
 │  │   --unixsocket /tmp/falkordblite-XXXX.sock │   │
 │  │   --port 0 (no TCP)                        │   │
@@ -112,14 +112,14 @@ Implement a BinaryManager class that:
 
 1. Defines supported platforms: { os: 'linux'|'darwin'|'win32', arch: 'x64'|'arm64' }
 2. Has a method `ensureBinaries()` that:
-   a. Checks if redis-server and falkordb.so already exist in the expected location
+   a. Checks if valkey-server and falkordb.so already exist in the expected location
       (package's own bin/ directory OR a user-specified path)
-   b. If not found, checks for system-installed redis-server (which redis-server)
-   c. If no system redis-server, downloads pre-built binaries:
-      - redis-server from a configurable URL/GitHub release
+   b. If not found, checks for system-installed valkey-server (which valkey-server)
+   c. If no system valkey-server, downloads pre-built binaries:
+      - valkey-server from a configurable URL/GitHub release
       - falkordb.so from FalkorDB GitHub releases
    d. Sets executable permissions (chmod +x)
-3. Has getRedisServerPath(): string
+3. Has getValkeyServerPath(): string
 4. Has getFalkorDBModulePath(): string
 5. Binary paths should be resolved in this priority order:
    a. User-provided paths in options
@@ -127,9 +127,9 @@ Implement a BinaryManager class that:
    c. System PATH
 
 Platform-specific notes:
-- Linux: redis-server + falkordb.so
-- macOS: redis-server + falkordb.dylib (or .so), needs libomp
-- Windows: redis-server.exe + falkordb.dll (via WSL or native)
+- Linux: valkey-server + falkordb.so
+- macOS: valkey-server + falkordb.dylib (or .so), needs libomp
+- Windows: valkey-server.exe + falkordb.dll (via WSL or native)
 
 For the MVP, focus on Linux x64 and macOS arm64/x64.
 Create a postinstall script that runs ensureBinaries().
@@ -139,10 +139,10 @@ Create a postinstall script that runs ensureBinaries().
 ```
 Create a postinstall script that:
 1. Detects the current platform
-2. Downloads the appropriate redis-server and falkordb.so binaries
+2. Downloads the appropriate valkey-server and falkordb.so binaries
 3. Places them in the package's bin/ directory
 4. Sets correct permissions
-5. Verifies the binaries work (redis-server --version)
+5. Verifies the binaries work (valkey-server --version)
 6. Prints a success message or clear error with troubleshooting steps
 
 This script should be referenced in package.json "scripts.postinstall".
@@ -156,7 +156,7 @@ print instructions for manual setup.
 
 **Task 3.1 — Create `src/config-generator.ts`**
 ```
-Implement a ConfigGenerator class that generates a redis.conf string:
+Implement a ConfigGenerator class that generates a valkey.conf string:
 
 Parameters:
 - unixSocketPath: string (auto-generated temp path if not provided)
@@ -179,23 +179,23 @@ The generated config should:
 - Set `bind 127.0.0.1` as fallback safety
 - Include any additionalConfig key-value pairs
 
-Method: generate(): string — returns the full redis.conf content
+Method: generate(): string — returns the full valkey.conf content
 Method: getSocketPath(): string
 ```
 
 **Task 3.2 — Create `src/server-manager.ts`**
 ```
-Implement a ServerManager class that manages the redis-server child process:
+Implement a ServerManager class that manages the valkey-server child process:
 
 Constructor options:
-- redisServerPath: string
-- config: string (the generated redis.conf content)
+- valkeyServerPath: string
+- config: string (the generated valkey.conf content)
 - configPath?: string (write config to this file, or use a temp file)
 
 Methods:
 - async start(): Promise<void>
   1. Write the config to a temp file
-  2. Spawn redis-server as a child process using Node.js child_process.spawn()
+  2. Spawn valkey-server as a child process using Node.js child_process.spawn()
   3. Pipe stdout/stderr for logging (configurable)
   4. Wait for the server to be ready by:
      a. Polling the Unix socket with a PING command
@@ -215,7 +215,7 @@ Methods:
 - getPid(): number | undefined
 
 Error handling:
-- If redis-server fails to start, capture stderr and throw descriptive error
+- If valkey-server fails to start, capture stderr and throw descriptive error
 - Handle EADDRINUSE (socket already exists) — clean up stale sockets
 - Register process.on('exit') handler to clean up on unexpected exit
 - Register process.on('SIGINT') and process.on('SIGTERM') for graceful shutdown
@@ -232,7 +232,7 @@ Implement global cleanup tracking:
 4. Handle the case where the parent Node.js process crashes
 5. On startup, detect and clean up stale socket files from previous runs
 
-This ensures no orphaned redis-server processes are left running.
+This ensures no orphaned valkey-server processes are left running.
 ```
 
 ---
@@ -247,7 +247,7 @@ import { FalkorDB as FalkorDBClient } from 'falkordb';
 
 interface FalkorDBLiteOptions {
   path?: string;            // DB file path (like SQLite), default: in-memory
-  redisServerPath?: string; // Custom redis-server binary path
+  valkeyServerPath?: string; // Custom valkey-server binary path
   modulePath?: string;      // Custom falkordb.so path
   maxMemory?: string;       // e.g., "256mb"
   logLevel?: 'debug' | 'verbose' | 'notice' | 'warning';
@@ -295,7 +295,7 @@ Key implementation details:
 
 3. close() should:
    a. Close the falkordb-ts client connection
-   b. Stop the redis-server process
+   b. Stop the valkey-server process
    c. Clean up temp files
 
 4. If path is provided, configure persistence (RDB) to that directory.
@@ -333,14 +333,14 @@ Create tests/config-generator.test.ts:
 Create tests/binary-manager.test.ts:
 - Test platform detection
 - Test binary path resolution priority
-- Test that ensureBinaries() finds system redis-server
+- Test that ensureBinaries() finds system valkey-server
 - Mock download scenarios
 ```
 
 **Task 5.3 — Integration tests for ServerManager**
 ```
 Create tests/server-manager.test.ts:
-(These require actual redis-server + falkordb.so binaries)
+(These require actual valkey-server + falkordb.so binaries)
 - Test server start and PING
 - Test server stop and cleanup
 - Test stale socket cleanup
@@ -464,7 +464,7 @@ Document common issues:
 Feed these tasks to Claude Code in this sequence. Each task should be a separate prompt/session:
 
 ### Sprint 1: Foundation (Tasks 1.1 → 1.2 → 3.1 → 3.2 → 3.3)
-Get the project scaffolded and the server lifecycle working. At the end of this sprint you should be able to spawn and stop a redis-server process.
+Get the project scaffolded and the server lifecycle working. At the end of this sprint you should be able to spawn and stop a valkey-server process.
 
 ### Sprint 2: Binaries (Tasks 2.1 → 2.2)
 Get binary management working. After this sprint, `npm install` should automatically set up the required binaries.
@@ -490,8 +490,8 @@ falkordblite-ts/
 ├── src/
 │   ├── index.ts                 # Package entry & re-exports
 │   ├── falkordb.ts              # Main FalkorDB class (public API)
-│   ├── server-manager.ts        # Redis server process lifecycle
-│   ├── config-generator.ts      # Redis config generation
+│   ├── server-manager.ts        # Valkey server process lifecycle
+│   ├── config-generator.ts      # Valkey config generation
 │   ├── binary-manager.ts        # Binary detection & download
 │   ├── cleanup.ts               # Global process cleanup
 │   └── types.ts                 # Shared TypeScript interfaces
@@ -499,13 +499,13 @@ falkordblite-ts/
 │   └── postinstall.ts           # npm postinstall binary setup
 ├── bin/                         # Pre-built binaries (gitignored, populated on install)
 │   ├── linux-x64/
-│   │   ├── redis-server
+│   │   ├── valkey-server
 │   │   └── falkordb.so
 │   ├── darwin-arm64/
-│   │   ├── redis-server
+│   │   ├── valkey-server
 │   │   └── falkordb.so
 │   └── darwin-x64/
-│       ├── redis-server
+│       ├── valkey-server
 │       └── falkordb.so
 ├── tests/
 │   ├── helpers.ts
@@ -540,9 +540,9 @@ falkordblite-ts/
 
 1. **API parity with `falkordb-ts`** — The `Graph` object must be identical. Users change one import line to migrate.
 2. **Zero config by default** — `FalkorDB.open()` with no arguments should just work (ephemeral in-memory graph).
-3. **Sub-process isolation** — The redis-server runs as a child process, not embedded in the Node.js runtime. This matches the Python version's architecture.
+3. **Sub-process isolation** — The valkey-server runs as a child process, not embedded in the Node.js runtime. This matches the Python version's architecture.
 4. **Unix socket communication** — No TCP ports exposed by default. No port conflicts.
-5. **Clean shutdown** — Register exit handlers. Never leave orphaned redis-server processes.
+5. **Clean shutdown** — Register exit handlers. Never leave orphaned valkey-server processes.
 6. **Platform support** — Linux x64 and macOS arm64/x64 as MVP. Windows via WSL as stretch goal.
 
 ---
