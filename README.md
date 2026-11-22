@@ -96,7 +96,7 @@ These are not required for normal usage but can help with custom embedding.
 | `logFile` | `string` | stdout | Redis log file path. |
 | `timeout` | `number` | `10000` | Startup timeout in milliseconds. |
 | `additionalConfig` | `Record<string, string>` | none | Extra redis.conf key/value pairs. |
-| `falkordbVersion` | `string` | `v4.16.3` | FalkorDB module release tag to download. |
+| `falkordbVersion` | `string` | `v6.2.0` | FalkorDB module release tag to download. |
 | `inheritStdio` | `boolean` | `false` | Pipe redis-server stdout/stderr to the parent. |
 
 Tip: use `additionalConfig` to set a TCP port (for external tools) by adding

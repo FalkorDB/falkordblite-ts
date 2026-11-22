@@ -50,8 +50,8 @@ describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
 
   describe('FALKORDB_VERSION', () => {
-    it('is a semver string prefixed with v', () => {
-      expect(FALKORDB_VERSION).toMatch(/^v\d+\.\d+\.\d+$/);
+    it('defaults to FalkorDB module 6.2.0', () => {
+      expect(FALKORDB_VERSION).toBe('v6.2.0');
     });
   });
 
