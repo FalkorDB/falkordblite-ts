@@ -10,7 +10,7 @@
     "scripts"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
