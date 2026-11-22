@@ -171,7 +171,8 @@ applies to your use.
 
 The `falkordblite` package itself contains no Redis or FalkorDB binaries; it
 runs `redis-server` as a separate process and talks to it over a socket. Each
-platform package ships a `LICENSE`, the full license texts and a `NOTICE`
-listing the exact bundled versions and their source code. See also
-[NOTICE](NOTICE). A `redis-server` found on your `PATH` is governed by the
-license under which you obtained it.
+platform package ships the full license texts, a `NOTICE` listing the exact
+bundled versions and source locations, and `THIRD-PARTY-NOTICES.txt` with
+notices for embedded dependencies. See also [NOTICE](NOTICE). A
+`redis-server` found on your `PATH` is governed by the license under which you
+obtained it.

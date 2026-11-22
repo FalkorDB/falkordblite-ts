@@ -78,6 +78,7 @@ jobs:
           REDIS_VERSION: ${{ inputs.redis_version }}
           FALKORDB_VERSION: ${{ inputs.falkordb_version }}
           PLATFORM: ${{ matrix.platform }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           ./packages/update-license-files.sh "${REDIS_VERSION}" "${FALKORDB_VERSION}" "${PLATFORM}"
@@ -102,7 +103,7 @@ jobs:
           cd "packages/${{ matrix.platform }}"
           contents="$(npm pack --dry-run --json | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8"))[0]; console.log(p.files.map(f=>f.path).join("\n"))')"
           echo "$contents"
-          for f in bin/redis-server bin/falkordb.so LICENSE LICENSE-REDIS.txt LICENSE-FALKORDB LICENSE-FALKORDB-SSPL LICENSE-FALKORDB-AGPL NOTICE; do
+          for f in bin/redis-server bin/falkordb.so LICENSE LICENSE-REDIS.txt LICENSE-FALKORDB LICENSE-SSPL LICENSE-AGPL LICENSE-FALKORDB-SSPL LICENSE-FALKORDB-AGPL THIRD-PARTY-NOTICES.txt NOTICE; do
             grep -qx "$f" <<<"$contents" || { echo "Missing $f in package"; exit 1; }
           done
 

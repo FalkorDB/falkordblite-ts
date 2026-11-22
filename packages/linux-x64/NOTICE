@@ -1,6 +1,6 @@
-This package redistributes unmodified third-party software in binary form.
-The files listed below are NOT licensed under the MIT license of the
-falkordblite wrapper. See LICENSE for the licensing terms.
+This package redistributes third-party software in binary form. The MIT
+license for the separate falkordblite wrapper does not cover these binaries.
+Each binary and its embedded dependencies are governed by their own licenses.
 
 bin/redis-server
   Component: Redis 8.10.3
@@ -10,18 +10,16 @@ bin/redis-server
   Source:    https://github.com/redis/redis/tree/8.10.3
   Archive:   https://github.com/redis/redis/archive/refs/tags/8.10.3.tar.gz
   Built from the source above with: make redis-server
-  Redis statically links third-party libraries from its deps/ directory
-  (e.g. jemalloc, lua, hiredis, linenoise, hdr_histogram, fpconv, xxhash),
-  each under its own license; see https://github.com/redis/redis/tree/8.10.3/deps
+  Static dependency license texts and notices: THIRD-PARTY-NOTICES.txt
 
 bin/falkordb.so
   Component: FalkorDB v6.2.0
   Copyright: FalkorDB Ltd. and contributors
   License:   SSPLv1 or AGPLv3, at the licensee's choice
-             (full texts: LICENSE-FALKORDB, LICENSE-FALKORDB-SSPL,
-             LICENSE-FALKORDB-AGPL)
+             (license statement: LICENSE-FALKORDB; full texts: LICENSE-SSPL,
+             LICENSE-AGPL, LICENSE-FALKORDB-SSPL, LICENSE-FALKORDB-AGPL)
   Source:    https://github.com/FalkorDB/FalkorDB/tree/v6.2.0
   Binary:    https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.0
-  FalkorDB includes third-party components (e.g. GraphBLAS, LAGraph,
-  RediSearch) that are subject to their own license terms and notices;
-  see https://github.com/FalkorDB/FalkorDB/tree/v6.2.0/deps
+  Dependency license texts and notices: THIRD-PARTY-NOTICES.txt
+  Dependency revisions are pinned in:
+    https://github.com/FalkorDB/FalkorDB/tree/v6.2.0/deps/native-deps.lock
