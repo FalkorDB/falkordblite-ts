@@ -30,10 +30,7 @@ binary in the platform package, so installing an older bundle does not replace
 your system Redis. It uses a bundled FalkorDB module only when its release
 matches the configured version; otherwise, it downloads the requested module.
 
-The platform package build targets Redis 8.10.3 and FalkorDB 6.2.0. The
-currently published platform packages still contain Redis 8.2.3; after the new
-packages are published, the optional dependencies and lockfile must be updated.
-Until then, use a system Redis or `redisServerPath` to run a newer version.
+The platform packages bundle Redis 8.10.3 and FalkorDB 6.2.0.
 
 If you also want to connect to remote servers, install the upstream client:
 
