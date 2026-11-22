@@ -228,9 +228,6 @@ export class BinaryManager {
   }
 
   private findManagedFalkorDBModule(key: SupportedPlatform): string | undefined {
-    const cached = this.cachedFalkorDBModulePath(key);
-    if (existsSync(cached)) return cached;
-
     const packageName = `@falkordblite/${key}/package.json`;
     let packageJsonPath: string;
     try {
@@ -242,7 +239,8 @@ export class BinaryManager {
         'code' in error &&
         error.code === 'MODULE_NOT_FOUND'
       ) {
-        return undefined;
+        const cached = this.cachedFalkorDBModulePath(key);
+        return existsSync(cached) ? cached : undefined;
       }
       throw error;
     }
@@ -258,10 +256,13 @@ export class BinaryManager {
     }
 
     const release = this.falkordbVersion.replace(/^v/, '');
-    if (!packageInfo.version.endsWith(`-falkordb.${release}`)) return undefined;
+    if (packageInfo.version.endsWith(`-falkordb.${release}`)) {
+      const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
+      if (existsSync(npmBin)) return npmBin;
+    }
 
-    const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
-    return existsSync(npmBin) ? npmBin : undefined;
+    const cached = this.cachedFalkorDBModulePath(key);
+    return existsSync(cached) ? cached : undefined;
   }
 
   // -----------------------------------------------------------------------

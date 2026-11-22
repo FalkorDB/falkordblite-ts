@@ -204,10 +204,16 @@ describe('BinaryManager', () => {
       await copyFile(join(__dirname, '..', 'src', 'binary-manager.ts'), isolatedSource);
       await mkdir(dirname(packagedModule), { recursive: true });
       const packageJson = join(packageDir, 'package.json');
+      const cachedMatchingModule = cachedModulePath(join(dir, 'cache'), 'v4.18.3');
+      const cachedUpgradedModule = cachedModulePath(join(dir, 'cache'), 'v6.2.0');
       await writeFile(packageJson, JSON.stringify({
         version: '8.6.2-falkordb.4.18.3',
       }));
       await writeFile(packagedModule, 'packaged');
+      await mkdir(dirname(cachedMatchingModule), { recursive: true });
+      await mkdir(dirname(cachedUpgradedModule), { recursive: true });
+      await writeFile(cachedMatchingModule, 'cached matching');
+      await writeFile(cachedUpgradedModule, 'cached upgraded');
 
       const { BinaryManager: IsolatedBinaryManager } =
         require(isolatedSource) as typeof import('../src/binary-manager');
@@ -216,13 +222,13 @@ describe('BinaryManager', () => {
       const upgraded = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v6.2.0' });
 
       expect(matching.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
-      expect(() => upgraded.getFalkorDBModulePath()).toThrow('FalkorDB module not found');
+      expect(upgraded.getFalkorDBModulePath()).toBe(cachedUpgradedModule);
 
       await writeFile(packageJson, JSON.stringify({
         version: '8.6.2-falkordb.6.2.0',
       }));
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
-      expect(() => matching.getFalkorDBModulePath()).toThrow('FalkorDB module not found');
+      expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);
     });
 
     it('keeps custom release tags inside the binary cache', async () => {

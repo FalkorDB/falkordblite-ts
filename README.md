@@ -25,9 +25,10 @@ await db.close();
 npm install falkordblite
 ```
 
-The package uses pre-built Redis and FalkorDB binaries from platform packages
-when available. Otherwise, it downloads the FalkorDB module and uses a
-`redis-server` from your system.
+The package uses pre-built Redis binaries from platform packages when
+available. It uses a FalkorDB module only when its release matches the
+configured version; otherwise, it downloads the module. If a Redis binary is
+not available in the platform package, install Redis on your system.
 
 If you also want to connect to remote servers, install the upstream client:
 
