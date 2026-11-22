@@ -3,10 +3,10 @@ name: Publish Platform Packages
 on:
   workflow_dispatch:
     inputs:
-      redis_version:
-        description: 'Redis version to build'
+      valkey_version:
+        description: 'Valkey version to build'
         required: true
-        default: '8.6.2'
+        default: '9.1.3'
       falkordb_version:
         description: 'FalkorDB release tag'
         required: true
@@ -34,21 +34,21 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Build Redis from source
+      - name: Build Valkey from source
         run: |
           set -euo pipefail
-          REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
+          VALKEY_TARBALL="valkey-${{ inputs.valkey_version }}.tar.gz"
 
           curl --fail --location --silent --show-error \
-            -o "${REDIS_TARBALL}" \
-            "https://github.com/redis/redis/archive/refs/tags/${{ inputs.redis_version }}.tar.gz"
+            -o "${VALKEY_TARBALL}" \
+            "https://github.com/valkey-io/valkey/archive/refs/tags/${{ inputs.valkey_version }}.tar.gz"
 
-          tar xzf "${REDIS_TARBALL}"
-          cd "redis-${{ inputs.redis_version }}"
-          make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
+          tar xzf "${VALKEY_TARBALL}"
+          cd "valkey-${{ inputs.valkey_version }}"
+          make valkey-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
           mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
-          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
-          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
+          cp src/valkey-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
+          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/valkey-server"
 
       - name: Download FalkorDB module
         run: |
@@ -64,8 +64,8 @@ jobs:
 
           chmod +x "${FALKORDB_SO}"
 
-      - name: Verify redis-server
-        run: ./packages/${{ matrix.platform }}/bin/redis-server --version
+      - name: Verify valkey-server
+        run: ./packages/${{ matrix.platform }}/bin/valkey-server --version
 
       - name: Update npm
         run: npm install -g npm@latest
@@ -73,11 +73,11 @@ jobs:
       - name: Set package version
         run: |
           cd "packages/${{ matrix.platform }}"
-          # Derive version from Redis and FalkorDB versions
-          # Redis 8.6.2 + FalkorDB v4.18.3 -> 8.6.2-falkordb.4.18.3
+          # Derive version from Valkey and FalkorDB versions
+          # Valkey 9.1.3 + FalkorDB v4.18.3 -> 9.1.3-falkordb.4.18.3
           FALKORDB_VERSION="${{ inputs.falkordb_version }}"
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
-          PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          PACKAGE_VERSION="${{ inputs.valkey_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
           npm version "${PACKAGE_VERSION}" --no-git-tag-version
 
       - name: Publish

@@ -15,8 +15,8 @@ export interface FalkorDBLiteOptions {
   /** Database directory for persistence (like SQLite's file path).
    *  If omitted, uses a temp directory — data is ephemeral. */
   path?: string;
-  /** Custom redis-server binary path. */
-  redisServerPath?: string;
+  /** Custom valkey-server binary path. */
+  valkeyServerPath?: string;
   /** Custom FalkorDB module (.so) path. */
   modulePath?: string;
   /** Memory limit, e.g. "256mb". */
@@ -27,11 +27,11 @@ export interface FalkorDBLiteOptions {
   logFile?: string;
   /** Server startup timeout in ms. Defaults to 10 000. */
   timeout?: number;
-  /** Extra redis.conf key-value pairs. */
+  /** Extra valkey.conf key-value pairs. */
   additionalConfig?: Record<string, string>;
   /** FalkorDB release version tag (e.g. "v4.16.3"). */
   falkordbVersion?: string;
-  /** If true, pipe redis-server stdout/stderr to parent process. */
+  /** If true, pipe valkey-server stdout/stderr to parent process. */
   inheritStdio?: boolean;
 }
 
@@ -75,7 +75,7 @@ export class FalkorDB {
 
     // 1. Resolve binaries (downloads FalkorDB module if needed)
     const bm = new BinaryManager({
-      redisServerPath: opts.redisServerPath,
+      valkeyServerPath: opts.valkeyServerPath,
       falkordbModulePath: opts.modulePath,
       falkordbVersion: opts.falkordbVersion,
     });
@@ -94,7 +94,7 @@ export class FalkorDB {
       ownsTempDir = true;
     }
 
-    // 3. Generate redis.conf
+    // 3. Generate valkey.conf
     const additionalConfig: Record<string, string> = {
       ...opts.additionalConfig,
     };
@@ -121,9 +121,9 @@ export class FalkorDB {
     const config = configGen.generate();
     const socketPath = configGen.getSocketPath();
 
-    // 4. Start the redis-server child process
+    // 4. Start the valkey-server child process
     const server = new ServerManager({
-      redisServerPath: bins.redisServerPath,
+      valkeyServerPath: bins.valkeyServerPath,
       config,
       socketPath,
       startupTimeoutMs: opts.timeout,
@@ -207,7 +207,7 @@ export class FalkorDB {
       // Client may already be disconnected.
     }
 
-    // 2. Stop the redis-server process (save RDB if persistent)
+    // 2. Stop the valkey-server process (save RDB if persistent)
     await this.server.stop(!this.ownsTempDir);
 
     // 3. Clean up temp data directory (ephemeral mode only)
@@ -225,12 +225,12 @@ export class FalkorDB {
     return this.server.socketPath;
   }
 
-  /** PID of the embedded redis-server child process. */
+  /** PID of the embedded valkey-server child process. */
   get pid(): number | undefined {
     return this.server.getPid();
   }
 
-  /** Whether the embedded redis-server is still running. */
+  /** Whether the embedded valkey-server is still running. */
   get isRunning(): boolean {
     return this.server.isRunning();
   }

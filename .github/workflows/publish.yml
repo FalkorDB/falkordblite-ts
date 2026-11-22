@@ -19,12 +19,19 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Install redis-server and dependencies
+      - name: Build valkey-server and install dependencies
         run: |
-          curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list
+          set -euo pipefail
+          VALKEY_VERSION=9.1.3
           sudo apt-get update
-          sudo apt-get install -y redis-server libgomp1
+          sudo apt-get install -y libgomp1
+          curl --fail --location --silent --show-error \
+            -o "valkey-${VALKEY_VERSION}.tar.gz" \
+            "https://github.com/valkey-io/valkey/archive/refs/tags/${VALKEY_VERSION}.tar.gz"
+          tar xzf "valkey-${VALKEY_VERSION}.tar.gz"
+          cd "valkey-${VALKEY_VERSION}"
+          make valkey-server -j"$(nproc)"
+          sudo install -m 0755 src/valkey-server /usr/local/bin/valkey-server
 
       - name: Update npm
         run: npm install -g npm@latest

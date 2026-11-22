@@ -7,7 +7,7 @@
 [![node](https://img.shields.io/node/v/falkordblite.svg)](package.json)
 
 Embedded FalkorDB for Node.js/TypeScript. Zero-config graph database that runs
-locally (redis-server + FalkorDB module) and connects over a Unix socket.
+locally (valkey-server + FalkorDB module) and connects over a Unix socket.
 
 ## Quick start
 
@@ -25,7 +25,7 @@ await db.close();
 npm install falkordblite
 ```
 
-The package automatically installs pre-built Redis + FalkorDB binaries for your
+The package automatically installs pre-built Valkey + FalkorDB binaries for your
 platform. No system dependencies required.
 
 If you also want to connect to remote servers, install the upstream client:
@@ -49,7 +49,7 @@ See the `examples/` directory:
 ### `FalkorDB.open(options?)`
 
 Create a new embedded FalkorDB instance. This resolves binaries, generates a
-redis.conf, starts a local redis-server process, and connects a falkordb client.
+valkey.conf, starts a local valkey-server process, and connects a falkordb client.
 
 Returns: `Promise<FalkorDB>`
 
@@ -65,7 +65,7 @@ Returns: `Promise<FalkorDB>`
 ### `FalkorDB` getters
 
 - `socketPath: string` - Unix socket path for the embedded server
-- `pid: number | undefined` - redis-server PID
+- `pid: number | undefined` - valkey-server PID
 - `isRunning: boolean` - whether the server is still alive
 
 ### Graph API (from `falkordb`)
@@ -89,15 +89,15 @@ These are not required for normal usage but can help with custom embedding.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `path` | `string` | temp dir | Data directory for persistence. If set, periodic snapshots are enabled. |
-| `redisServerPath` | `string` | auto | Custom redis-server binary path. |
+| `valkeyServerPath` | `string` | auto | Custom valkey-server binary path. |
 | `modulePath` | `string` | auto | Custom FalkorDB module (.so) path. |
 | `maxMemory` | `string` | unset | Redis maxmemory, e.g. `"256mb"`. |
 | `logLevel` | `'debug' \| 'verbose' \| 'notice' \| 'warning'` | unset | Redis log level. |
 | `logFile` | `string` | stdout | Redis log file path. |
 | `timeout` | `number` | `10000` | Startup timeout in milliseconds. |
-| `additionalConfig` | `Record<string, string>` | none | Extra redis.conf key/value pairs. |
+| `additionalConfig` | `Record<string, string>` | none | Extra valkey.conf key/value pairs. |
 | `falkordbVersion` | `string` | `v4.16.3` | FalkorDB module release tag to download. |
-| `inheritStdio` | `boolean` | `false` | Pipe redis-server stdout/stderr to the parent. |
+| `inheritStdio` | `boolean` | `false` | Pipe valkey-server stdout/stderr to the parent. |
 
 Tip: use `additionalConfig` to set a TCP port (for external tools) by adding
 `{ port: '6379' }`.
@@ -124,7 +124,7 @@ const db = await FalkorDB.connect({
 | --- | --- |
 | Linux x64 | ✅ Fully supported (binaries included) |
 | macOS arm64 | ✅ Fully supported (binaries included) |
-| macOS x64 | Use system redis-server + custom module path |
+| macOS x64 | Use system valkey-server + custom module path |
 | Windows | Use WSL2 or a remote server |
 
 ## Troubleshooting

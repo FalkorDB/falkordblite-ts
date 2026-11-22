@@ -12,12 +12,12 @@ import {
 
 jest.setTimeout(30_000);
 
-let redisServerPath: string;
+let valkeyServerPath: string;
 let falkordbModulePath: string;
 
 beforeAll(async () => {
   const paths = await getTestBinaryPaths();
-  redisServerPath = paths.redisServerPath;
+  valkeyServerPath = paths.valkeyServerPath;
   falkordbModulePath = paths.falkordbModulePath;
 });
 
@@ -41,7 +41,7 @@ describe('ServerManager', () => {
       const dbDir = await makeTempDir();
       const { config, socketPath } = makeConfig(dbDir);
 
-      const server = new ServerManager({ redisServerPath, config, socketPath });
+      const server = new ServerManager({ valkeyServerPath, config, socketPath });
       onCleanup(() => server.stop());
 
       await server.start();
@@ -60,7 +60,7 @@ describe('ServerManager', () => {
       const dbDir = await makeTempDir();
       const { config, socketPath } = makeConfig(dbDir);
 
-      const server = new ServerManager({ redisServerPath, config, socketPath });
+      const server = new ServerManager({ valkeyServerPath, config, socketPath });
       onCleanup(() => server.stop());
 
       await server.start();
@@ -74,7 +74,7 @@ describe('ServerManager', () => {
       const dbDir = await makeTempDir();
       const { config, socketPath } = makeConfig(dbDir);
 
-      const server = new ServerManager({ redisServerPath, config, socketPath });
+      const server = new ServerManager({ valkeyServerPath, config, socketPath });
       onCleanup(() => server.stop());
 
       await server.start();
@@ -96,7 +96,7 @@ describe('ServerManager', () => {
       await writeFile(socketPath, 'stale');
       expect(existsSync(socketPath)).toBe(true);
 
-      const server = new ServerManager({ redisServerPath, config, socketPath });
+      const server = new ServerManager({ valkeyServerPath, config, socketPath });
       onCleanup(() => server.stop());
 
       await server.start();
@@ -111,12 +111,12 @@ describe('ServerManager', () => {
   // -----------------------------------------------------------------------
 
   describe('error handling', () => {
-    it('throws when redis-server binary does not exist', async () => {
+    it('throws when valkey-server binary does not exist', async () => {
       const dbDir = await makeTempDir();
       const { config, socketPath } = makeConfig(dbDir);
 
       const server = new ServerManager({
-        redisServerPath: '/nonexistent/redis-server',
+        valkeyServerPath: '/nonexistent/valkey-server',
         config,
         socketPath,
         startupTimeoutMs: 3_000,
@@ -141,7 +141,7 @@ describe('ServerManager', () => {
       ].join('\n');
 
       const server = new ServerManager({
-        redisServerPath,
+        valkeyServerPath,
         config: badConfig,
         socketPath,
         startupTimeoutMs: 5_000,
@@ -163,12 +163,12 @@ describe('ServerManager', () => {
       const cfg2 = makeConfig(dbDir2);
 
       const server1 = new ServerManager({
-        redisServerPath,
+        valkeyServerPath,
         config: cfg1.config,
         socketPath: cfg1.socketPath,
       });
       const server2 = new ServerManager({
-        redisServerPath,
+        valkeyServerPath,
         config: cfg2.config,
         socketPath: cfg2.socketPath,
       });
@@ -198,7 +198,7 @@ describe('ServerManager', () => {
       const dbDir = await makeTempDir();
       const { config, socketPath } = makeConfig(dbDir);
 
-      const server = new ServerManager({ redisServerPath, config, socketPath });
+      const server = new ServerManager({ valkeyServerPath, config, socketPath });
       onCleanup(() => server.stop());
 
       await server.start();

@@ -6,7 +6,7 @@ const DEFAULTS: ConfigGeneratorOptions = {
   falkordbModulePath: '/path/to/falkordb.so',
 };
 
-/** Parse a redis.conf string into a key→value map (last value wins). */
+/** Parse a valkey.conf string into a key→value map (last value wins). */
 function parse(config: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const line of config.split('\n')) {

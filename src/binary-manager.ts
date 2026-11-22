@@ -27,13 +27,13 @@ interface PlatformMeta {
   falkordbAsset: string;
   /** Local filename for the downloaded module. */
   moduleName: string;
-  /** redis-server binary name on this platform. */
-  redisServerBin: string;
+  /** valkey-server binary name on this platform. */
+  valkeyServerBin: string;
 }
 
 export interface BinaryManagerOptions {
-  /** Custom path to a redis-server binary. Takes highest priority. */
-  redisServerPath?: string;
+  /** Custom path to a valkey-server binary. Takes highest priority. */
+  valkeyServerPath?: string;
   /** Custom path to a FalkorDB module (.so). Takes highest priority. */
   falkordbModulePath?: string;
   /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
@@ -43,7 +43,7 @@ export interface BinaryManagerOptions {
 }
 
 export interface BinaryPaths {
-  redisServerPath: string;
+  valkeyServerPath: string;
   falkordbModulePath: string;
 }
 
@@ -55,12 +55,12 @@ const PLATFORMS: Record<SupportedPlatform, PlatformMeta> = {
   'linux-x64': {
     falkordbAsset: 'falkordb-x64.so',
     moduleName: 'falkordb.so',
-    redisServerBin: 'redis-server',
+    valkeyServerBin: 'valkey-server',
   },
   'darwin-arm64': {
     falkordbAsset: 'falkordb-macos-arm64v8.so',
     moduleName: 'falkordb.so',
-    redisServerBin: 'redis-server',
+    valkeyServerBin: 'valkey-server',
   },
 };
 
@@ -71,11 +71,11 @@ const PLATFORMS: Record<SupportedPlatform, PlatformMeta> = {
 export class BinaryManager {
   private readonly binDir: string;
   private readonly falkordbVersion: string;
-  private readonly userRedisServerPath?: string;
+  private readonly userValkeyServerPath?: string;
   private readonly userModulePath?: string;
 
   constructor(options?: BinaryManagerOptions) {
-    this.userRedisServerPath = options?.redisServerPath;
+    this.userValkeyServerPath = options?.valkeyServerPath;
     this.userModulePath = options?.falkordbModulePath;
     this.falkordbVersion = options?.falkordbVersion ?? FALKORDB_VERSION;
     this.binDir = options?.binDir ?? join(__dirname, '..', 'bin');
@@ -121,22 +121,22 @@ export class BinaryManager {
    * Ensure all required binaries are available.
    *
    * - Downloads the FalkorDB module from GitHub if not already present.
-   * - Verifies redis-server is reachable (user path → bin/ → system PATH).
+   * - Verifies valkey-server is reachable (user path → bin/ → system PATH).
    *
    * Idempotent: skips downloads when the target file already exists.
    */
   async ensureBinaries(): Promise<BinaryPaths> {
     const falkordbModulePath = await this.ensureFalkorDBModule();
-    const redisServerPath = this.resolveRedisServer();
-    return { redisServerPath, falkordbModulePath };
+    const valkeyServerPath = this.resolveValkeyServer();
+    return { valkeyServerPath, falkordbModulePath };
   }
 
   /**
-   * Resolve redis-server path (no download).
-   * @throws {Error} If redis-server is not found in the configured path, packaged binaries, or system PATH.
+   * Resolve valkey-server path (no download).
+   * @throws {Error} If valkey-server is not found in the configured path, packaged binaries, or system PATH.
    */
-  getRedisServerPath(): string {
-    return this.resolveRedisServer();
+  getValkeyServerPath(): string {
+    return this.resolveValkeyServer();
   }
 
   /**
@@ -151,21 +151,21 @@ export class BinaryManager {
   // Private: path resolution
   // -----------------------------------------------------------------------
 
-  private resolveRedisServer(): string {
+  private resolveValkeyServer(): string {
     // 1. User-provided path
-    if (this.userRedisServerPath) {
-      if (!existsSync(this.userRedisServerPath)) {
+    if (this.userValkeyServerPath) {
+      if (!existsSync(this.userValkeyServerPath)) {
         throw new Error(
-          `redis-server not found at: ${this.userRedisServerPath}`,
+          `valkey-server not found at: ${this.userValkeyServerPath}`,
         );
       }
-      return this.userRedisServerPath;
+      return this.userValkeyServerPath;
     }
 
     // 2. Package-local bin/ directory
     try {
       const key = BinaryManager.detectPlatform();
-      const local = join(this.binDir, key, PLATFORMS[key].redisServerBin);
+      const local = join(this.binDir, key, PLATFORMS[key].valkeyServerBin);
       if (existsSync(local)) return local;
     } catch {
       // Platform detection failed — skip bin/ check, fall through to PATH.
@@ -176,21 +176,21 @@ export class BinaryManager {
       const key = BinaryManager.detectPlatform();
       const pkgName = `@falkordblite/${key}`;
       const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
+      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].valkeyServerBin);
       if (existsSync(npmBin)) return npmBin;
     } catch {
       // Package not installed — fall through to system PATH.
     }
 
     // 4. System PATH
-    const system = BinaryManager.findInSystemPath('redis-server');
+    const system = BinaryManager.findInSystemPath('valkey-server');
     if (system) return system;
 
     throw new Error(
-      'redis-server not found. Install it with:\n' +
-      '  Ubuntu/Debian: sudo apt install redis-server\n' +
-      '  macOS:         brew install redis\n' +
-      'Or pass redisServerPath in options.',
+      'valkey-server not found. Install it with:\n' +
+      '  Ubuntu/Debian: sudo apt install valkey-server\n' +
+      '  macOS:         brew install valkey\n' +
+      'Or pass valkeyServerPath in options.',
     );
   }
 

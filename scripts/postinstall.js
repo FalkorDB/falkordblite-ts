@@ -24,7 +24,7 @@ async function main() {
     const paths = await manager.ensureBinaries();
 
     console.log('falkordblite: Binary setup complete.');
-    console.log(`  redis-server:    ${paths.redisServerPath}`);
+    console.log(`  valkey-server:   ${paths.valkeyServerPath}`);
     console.log(`  FalkorDB module: ${paths.falkordbModulePath}`);
   } catch (err) {
     // Never fail the install — warn and give troubleshooting advice.
@@ -33,7 +33,7 @@ async function main() {
     console.warn(
       'You can still use falkordblite by providing binary paths manually:\n' +
       '  const db = await FalkorDB.open({\n' +
-      '    redisServerPath: "/path/to/redis-server",\n' +
+      '    valkeyServerPath: "/path/to/valkey-server",\n' +
       '    modulePath: "/path/to/falkordb.so",\n' +
       '  });\n',
     );
