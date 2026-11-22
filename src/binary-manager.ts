@@ -1,4 +1,5 @@
-import { existsSync, createWriteStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, createWriteStream, readFileSync } from 'node:fs';
 import { chmod, mkdir, unlink } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { platform, arch } from 'node:os';
@@ -11,7 +12,7 @@ import { get as httpGet } from 'node:http';
 // ---------------------------------------------------------------------------
 
 /** Default FalkorDB release version to download. */
-export const FALKORDB_VERSION = 'v4.18.3';
+export const FALKORDB_VERSION = 'v6.2.0';
 
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
@@ -38,7 +39,7 @@ export interface BinaryManagerOptions {
   falkordbModulePath?: string;
   /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
   binDir?: string;
-  /** FalkorDB GitHub release tag, e.g. "v4.18.3". */
+  /** FalkorDB GitHub release tag, e.g. "v6.2.0". */
   falkordbVersion?: string;
 }
 
@@ -205,25 +206,62 @@ export class BinaryManager {
       return this.userModulePath;
     }
 
-    // 2. Package-local bin/ directory
     const key = BinaryManager.detectPlatform();
-    const local = join(this.binDir, key, PLATFORMS[key].moduleName);
-    if (existsSync(local)) return local;
-
-    // 3. Platform-specific npm package (@falkordblite/<platform>)
-    try {
-      const pkgName = `@falkordblite/${key}`;
-      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    } catch {
-      // Package not installed — fall through.
-    }
+    const managed = this.findManagedFalkorDBModule(key);
+    if (managed) return managed;
 
     throw new Error(
       'FalkorDB module not found. Run `npm run postinstall` to download it,\n' +
       'or pass falkordbModulePath in options.',
     );
+  }
+
+  private cachedFalkorDBModulePath(key: SupportedPlatform): string {
+    // Release tags remain distinct on case-insensitive filesystems.
+    const versionKey = createHash('sha256').update(this.falkordbVersion).digest('hex');
+    return join(
+      this.binDir,
+      key,
+      `falkordb-${versionKey}`,
+      PLATFORMS[key].moduleName,
+    );
+  }
+
+  private findManagedFalkorDBModule(key: SupportedPlatform): string | undefined {
+    const cached = this.cachedFalkorDBModulePath(key);
+    if (existsSync(cached)) return cached;
+
+    const packageName = `@falkordblite/${key}/package.json`;
+    let packageJsonPath: string;
+    try {
+      packageJsonPath = require.resolve(packageName);
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'MODULE_NOT_FOUND'
+      ) {
+        return undefined;
+      }
+      throw error;
+    }
+
+    const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    if (
+      typeof packageInfo !== 'object' ||
+      packageInfo === null ||
+      !('version' in packageInfo) ||
+      typeof packageInfo.version !== 'string'
+    ) {
+      throw new Error(`Missing version in ${packageName}`);
+    }
+
+    const release = this.falkordbVersion.replace(/^v/, '');
+    if (!packageInfo.version.endsWith(`-falkordb.${release}`)) return undefined;
+
+    const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
+    return existsSync(npmBin) ? npmBin : undefined;
   }
 
   // -----------------------------------------------------------------------
@@ -243,28 +281,15 @@ export class BinaryManager {
 
     const key = BinaryManager.detectPlatform();
     const meta = PLATFORMS[key];
+    const managed = this.findManagedFalkorDBModule(key);
+    if (managed) return managed;
 
-    // Check platform-specific npm package first
-    try {
-      const pkgName = `@falkordblite/${key}`;
-      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-      const npmBin = join(pkgDir, 'bin', meta.moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    } catch {
-      // Not installed — proceed with download.
-    }
-
-    const targetDir = join(this.binDir, key);
-    const targetPath = join(targetDir, meta.moduleName);
-
-    // Idempotent: already present → skip
-    if (existsSync(targetPath)) return targetPath;
-
+    const targetPath = this.cachedFalkorDBModulePath(key);
     const url =
       `https://github.com/FalkorDB/FalkorDB/releases/download/` +
-      `${this.falkordbVersion}/${meta.falkordbAsset}`;
+      `${encodeURIComponent(this.falkordbVersion)}/${meta.falkordbAsset}`;
 
-    await mkdir(targetDir, { recursive: true });
+    await mkdir(dirname(targetPath), { recursive: true });
 
     console.log(`Downloading FalkorDB module (${meta.falkordbAsset})...`);
     await downloadFile(url, targetPath);

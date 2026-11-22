@@ -31,6 +31,24 @@ describe('ephemeral mode', () => {
 
     expect(db.isRunning).toBe(false);
   });
+
+  it('starts FalkorDB 6.2.0 by default', async () => {
+    const db = await openTracked();
+    const client = await FalkorDBClient.connect({
+      socket: { path: db.socketPath },
+    });
+
+    try {
+      const connection = await client.connection;
+      const modules = await connection.sendCommand(['MODULE', 'LIST']);
+      expect(modules).toEqual(expect.arrayContaining([
+        expect.arrayContaining(['name', 'graph', 'ver', 60200]),
+      ]));
+    } finally {
+      await client.close();
+      await db.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

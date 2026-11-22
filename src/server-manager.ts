@@ -83,17 +83,17 @@ export class ServerManager {
           new Error(`Failed to spawn redis-server: ${err.message}`),
         );
       });
-      child.on('exit', (code, signal) => {
-        if (code !== null && code !== 0) {
+      child.on('close', (code, signal) => {
+        if (signal) {
+          reject(
+            new Error(
+              `redis-server was killed by signal ${signal} before becoming ready.\nstdout: ${stdout}\nstderr: ${stderr}`,
+            ),
+          );
+        } else {
           reject(
             new Error(
               `redis-server exited with code ${code} before becoming ready.\nstdout: ${stdout}\nstderr: ${stderr}`,
-            ),
-          );
-        } else if (signal) {
-          reject(
-            new Error(
-              `redis-server was killed by signal ${signal} before becoming ready.`,
             ),
           );
         }
