@@ -25,8 +25,14 @@ await db.close();
 npm install falkordblite
 ```
 
-The package automatically installs pre-built Redis + FalkorDB binaries for your
-platform. No system dependencies required.
+The package uses the newer of `redis-server` on your `PATH` and the pre-built
+Redis binary in the platform package (the system binary wins ties), so an
+older system Redis does not block the module and an older bundle does not
+replace a newer system Redis. It uses a bundled FalkorDB module only when its
+release matches the configured version; otherwise, it downloads the requested
+module.
+
+The platform packages bundle Redis 8.10.3 and FalkorDB 6.2.0.
 
 If you also want to connect to remote servers, install the upstream client:
 
@@ -96,11 +102,22 @@ These are not required for normal usage but can help with custom embedding.
 | `logFile` | `string` | stdout | Redis log file path. |
 | `timeout` | `number` | `10000` | Startup timeout in milliseconds. |
 | `additionalConfig` | `Record<string, string>` | none | Extra redis.conf key/value pairs. |
-| `falkordbVersion` | `string` | `v4.16.3` | FalkorDB module release tag to download. |
+| `falkordbVersion` | `string` | `v6.2.0` | FalkorDB module release tag to download. |
 | `inheritStdio` | `boolean` | `false` | Pipe redis-server stdout/stderr to the parent. |
 
 Tip: use `additionalConfig` to set a TCP port (for external tools) by adding
 `{ port: '6379' }`.
+
+Downloaded modules are cached per release. A custom `modulePath` takes
+precedence over `falkordbVersion`.
+
+### Upgrading persisted data
+
+Back up existing data before upgrading. FalkorDB 6.2 can read data saved by the
+previous default, 4.18.3, but once 6.2 saves it, 4.18.3 cannot read it.
+Graphs with CCH indexes must have those indexes removed, and data using RDB
+encoding versions older than 19 must first be saved by a compatible 4.x release;
+see the [upstream upgrade notes](https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.0#upgrade-notes).
 
 ## Migration guide (embedded -> remote)
 
@@ -122,8 +139,8 @@ const db = await FalkorDB.connect({
 
 | Platform | Status |
 | --- | --- |
-| Linux x64 | ✅ Fully supported (binaries included) |
-| macOS arm64 | ✅ Fully supported (binaries included) |
+| Linux x64 | ✅ Fully supported (pre-built module available) |
+| macOS arm64 | ✅ Fully supported (pre-built module available) |
 | macOS x64 | Use system redis-server + custom module path |
 | Windows | Use WSL2 or a remote server |
 
@@ -138,4 +155,5 @@ Contributions are welcome. Please open an issue for major changes, and ensure
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+This package is MIT licensed; see [LICENSE](LICENSE). The FalkorDB module is
+separately licensed under SSPLv1 or AGPLv3.

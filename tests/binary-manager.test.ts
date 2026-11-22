@@ -1,11 +1,26 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { copyFile, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { createServer, get } from 'node:http';
+import https from 'node:https';
 import { platform, arch } from 'node:os';
+import { dirname, join } from 'node:path';
 import { BinaryManager, FALKORDB_VERSION } from '../src/binary-manager';
-import { cleanupAll } from './helpers';
+import { cleanupAll, makeTempDir } from './helpers';
 
 afterAll(async () => {
   await cleanupAll();
 });
+
+function cachedModulePath(binDir: string, version: string): string {
+  const versionKey = createHash('sha256').update(version).digest('hex');
+  return join(
+    binDir,
+    BinaryManager.detectPlatform(),
+    `falkordb-${versionKey}`,
+    'falkordb.so',
+  );
+}
 
 describe('BinaryManager', () => {
   // -----------------------------------------------------------------------
@@ -142,6 +157,161 @@ describe('BinaryManager', () => {
     });
   });
 
+  describe('release-aware module resolution', () => {
+    it('does not reuse legacy or differently versioned cached modules', async () => {
+      const binDir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const legacy = join(binDir, key, 'falkordb.so');
+      const previous = cachedModulePath(binDir, 'v0.0.1-test');
+      await mkdir(dirname(previous), { recursive: true });
+      await writeFile(legacy, 'legacy');
+      await writeFile(previous, 'previous');
+
+      const bm = new BinaryManager({
+        binDir,
+        falkordbVersion: 'v0.0.2-test',
+      });
+
+      expect(() => bm.getFalkorDBModulePath()).toThrow('FalkorDB module not found');
+    });
+
+    it('keeps separately requested releases in distinct caches', async () => {
+      const binDir = await makeTempDir();
+      const versions = ['v0.0.1-test', 'v0.0.1-TEST', 'v0.0.2-test'];
+      const paths = versions.map((version) => cachedModulePath(binDir, version));
+      for (const [index, path] of paths.entries()) {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, versions[index]);
+      }
+
+      for (const [index, version] of versions.entries()) {
+        const bm = new BinaryManager({
+          binDir,
+          falkordbVersion: version,
+          redisServerPath: process.execPath,
+        });
+        const modulePath = (await bm.ensureBinaries()).falkordbModulePath;
+        expect(modulePath).toBe(paths[index]);
+        expect(await readFile(modulePath, 'utf8')).toBe(version);
+        expect(bm.getFalkorDBModulePath()).toBe(paths[index]);
+      }
+    });
+
+    it('uses a packaged module only when its release matches', async () => {
+      const dir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const isolatedSource = join(dir, 'binary-manager.ts');
+      const packageDir = join(dir, 'node_modules', '@falkordblite', key);
+      const packagedModule = join(packageDir, 'bin', 'falkordb.so');
+      await copyFile(join(__dirname, '..', 'src', 'binary-manager.ts'), isolatedSource);
+      await mkdir(dirname(packagedModule), { recursive: true });
+      const packageJson = join(packageDir, 'package.json');
+      const cachedMatchingModule = cachedModulePath(join(dir, 'cache'), 'v4.18.3');
+      const cachedUpgradedModule = cachedModulePath(join(dir, 'cache'), 'v6.2.0');
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.6.2-falkordb.4.18.3',
+      }));
+      await writeFile(packagedModule, 'packaged');
+      await mkdir(dirname(cachedMatchingModule), { recursive: true });
+      await mkdir(dirname(cachedUpgradedModule), { recursive: true });
+      await writeFile(cachedMatchingModule, 'cached matching');
+      await writeFile(cachedUpgradedModule, 'cached upgraded');
+
+      const { BinaryManager: IsolatedBinaryManager } =
+        require(isolatedSource) as typeof import('../src/binary-manager');
+      const options = { binDir: join(dir, 'cache') };
+      const matching = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v4.18.3' });
+      const upgraded = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v6.2.0' });
+
+      expect(matching.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
+      expect(upgraded.getFalkorDBModulePath()).toBe(cachedUpgradedModule);
+
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.6.2-falkordb.6.2.0',
+      }));
+      expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
+      expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);
+
+      const bundledRedis = join(packageDir, 'bin', 'redis-server');
+      await writeFile(bundledRedis, '');
+      const systemRedis = jest.spyOn(IsolatedBinaryManager, 'findInSystemPath');
+      const versions = new Map<string, number[] | undefined>();
+      const redisVersion = jest.spyOn(IsolatedBinaryManager, 'getRedisVersion')
+        .mockImplementation((path) => versions.get(path));
+      try {
+        const packaged = await realpath(bundledRedis);
+        systemRedis.mockReturnValue(process.execPath);
+        versions.set(packaged, [8, 10, 3]);
+
+        versions.set(process.execPath, [8, 10, 3]);
+        expect(upgraded.getRedisServerPath()).toBe(process.execPath);
+        versions.set(process.execPath, [9, 0, 0]);
+        expect(upgraded.getRedisServerPath()).toBe(process.execPath);
+        versions.set(process.execPath, [6, 2, 14]);
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
+        versions.set(process.execPath, undefined);
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
+
+        systemRedis.mockReturnValue(undefined);
+        expect(upgraded.getRedisServerPath()).toBe(packaged);
+      } finally {
+        systemRedis.mockRestore();
+        redisVersion.mockRestore();
+      }
+    });
+
+    it('does not cache a truncated download and retries on the next call', async () => {
+      const binDir = await makeTempDir();
+      const version = 'v0.0.0-download-test';
+      const target = cachedModulePath(binDir, version);
+      const bm = new BinaryManager({
+        binDir,
+        falkordbVersion: version,
+        redisServerPath: process.execPath,
+      });
+      const module = 'complete module';
+      let requests = 0;
+      const server = createServer((_req, res) => {
+        res.writeHead(200, { 'Content-Length': module.length, Connection: 'close' });
+        res.end(++requests === 1 ? 'partial' : module);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a TCP listener');
+      const download = jest.spyOn(https, 'get').mockImplementation((_url, options, callback) =>
+        get(`http://127.0.0.1:${address.port}`, typeof options === 'function' ? options : callback),
+      );
+      try {
+        await expect(bm.ensureBinaries()).rejects.toThrow();
+        expect(await readdir(dirname(target))).toEqual([]);
+        expect(() => bm.getFalkorDBModulePath()).toThrow('FalkorDB module not found');
+
+        expect((await bm.ensureBinaries()).falkordbModulePath).toBe(target);
+        expect(await readFile(target, 'utf8')).toBe(module);
+        expect(requests).toBe(2);
+      } finally {
+        download.mockRestore();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => error ? reject(error) : resolve()),
+        );
+      }
+    });
+
+    it('keeps custom release tags inside the binary cache', async () => {
+      const binDir = await makeTempDir();
+      const version = '../custom-release';
+      const modulePath = cachedModulePath(binDir, version);
+      await mkdir(dirname(modulePath), { recursive: true });
+      await writeFile(modulePath, 'module');
+
+      const bm = new BinaryManager({ binDir, falkordbVersion: version });
+      expect(bm.getFalkorDBModulePath()).toBe(modulePath);
+    });
+  });
+
   // -----------------------------------------------------------------------
   // npm package resolution
   // -----------------------------------------------------------------------
@@ -149,14 +319,12 @@ describe('BinaryManager', () => {
   describe('npm package resolution', () => {
     const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
 
-    (hasRedisInPath() ? it : it.skip)('attempts to resolve redis-server from npm package before system PATH', () => {
-      // This test verifies the resolution order without requiring the npm package
+    (hasRedisInPath() ? it : it.skip)('resolves a redis-server whose version can be read', () => {
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       const result = bm.getRedisServerPath();
-      
-      // Should find redis-server either from npm package or system PATH
-      expect(result).toBeDefined();
-      expect(existsSync(result)).toBe(true);
+      expect(BinaryManager.getRedisVersion(result)).toEqual([
+        expect.any(Number), expect.any(Number), expect.any(Number),
+      ]);
     });
 
     (hasRedisInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {

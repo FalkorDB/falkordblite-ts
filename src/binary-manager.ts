@@ -1,17 +1,19 @@
-import { existsSync, createWriteStream } from 'node:fs';
-import { chmod, mkdir, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { existsSync, createWriteStream, readFileSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { platform, arch } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { get as httpsGet } from 'node:https';
 import { get as httpGet } from 'node:http';
+import { pipeline } from 'node:stream/promises';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /** Default FalkorDB release version to download. */
-export const FALKORDB_VERSION = 'v4.18.3';
+export const FALKORDB_VERSION = 'v6.2.0';
 
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
@@ -38,7 +40,7 @@ export interface BinaryManagerOptions {
   falkordbModulePath?: string;
   /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
   binDir?: string;
-  /** FalkorDB GitHub release tag, e.g. "v4.18.3". */
+  /** FalkorDB GitHub release tag, e.g. "v6.2.0". */
   falkordbVersion?: string;
 }
 
@@ -113,6 +115,21 @@ export class BinaryManager {
     }
   }
 
+  /** Read a redis-server binary's version, e.g. [8, 10, 3]. Returns undefined if unknown. */
+  static getRedisVersion(redisServerPath: string): number[] | undefined {
+    try {
+      const output = execFileSync(redisServerPath, ['--version'], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5_000,
+      });
+      const match = /\bv=(\d+)\.(\d+)\.(\d+)/.exec(output);
+      return match ? match.slice(1).map(Number) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Public API
   // -----------------------------------------------------------------------
@@ -121,7 +138,7 @@ export class BinaryManager {
    * Ensure all required binaries are available.
    *
    * - Downloads the FalkorDB module from GitHub if not already present.
-   * - Verifies redis-server is reachable (user path → bin/ → system PATH).
+   * - Verifies redis-server is reachable (user path → bin/ → newer of system PATH and platform package).
    *
    * Idempotent: skips downloads when the target file already exists.
    */
@@ -171,20 +188,32 @@ export class BinaryManager {
       // Platform detection failed — skip bin/ check, fall through to PATH.
     }
 
-    // 3. Platform-specific npm package (@falkordblite/<platform>)
+    // 3. System PATH or platform package (@falkordblite/<platform>)
+    const system = BinaryManager.findInSystemPath('redis-server');
+    let packaged: string | undefined;
     try {
       const key = BinaryManager.detectPlatform();
       const pkgName = `@falkordblite/${key}`;
       const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
       const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
-      if (existsSync(npmBin)) return npmBin;
+      if (existsSync(npmBin)) packaged = npmBin;
     } catch {
-      // Package not installed — fall through to system PATH.
+      // Package not installed.
     }
 
-    // 4. System PATH
-    const system = BinaryManager.findInSystemPath('redis-server');
-    if (system) return system;
+    // Use whichever is newer: an older system Redis may not load the module,
+    // and an older bundled Redis may not read data saved by the system Redis.
+    if (system && packaged) {
+      const systemVersion = BinaryManager.getRedisVersion(system);
+      const packagedVersion = BinaryManager.getRedisVersion(packaged);
+      if (!systemVersion) return packaged;
+      if (!packagedVersion || compareVersions(systemVersion, packagedVersion) >= 0) {
+        return system;
+      }
+      return packaged;
+    }
+    const found = system ?? packaged;
+    if (found) return found;
 
     throw new Error(
       'redis-server not found. Install it with:\n' +
@@ -205,25 +234,63 @@ export class BinaryManager {
       return this.userModulePath;
     }
 
-    // 2. Package-local bin/ directory
     const key = BinaryManager.detectPlatform();
-    const local = join(this.binDir, key, PLATFORMS[key].moduleName);
-    if (existsSync(local)) return local;
-
-    // 3. Platform-specific npm package (@falkordblite/<platform>)
-    try {
-      const pkgName = `@falkordblite/${key}`;
-      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-      const npmBin = join(pkgDir, 'bin', PLATFORMS[key].moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    } catch {
-      // Package not installed — fall through.
-    }
+    const managed = this.findManagedFalkorDBModule(key);
+    if (managed) return managed;
 
     throw new Error(
       'FalkorDB module not found. Run `npm run postinstall` to download it,\n' +
       'or pass falkordbModulePath in options.',
     );
+  }
+
+  private cachedFalkorDBModulePath(key: SupportedPlatform): string {
+    // Release tags remain distinct on case-insensitive filesystems.
+    const versionKey = createHash('sha256').update(this.falkordbVersion).digest('hex');
+    return join(
+      this.binDir,
+      key,
+      `falkordb-${versionKey}`,
+      PLATFORMS[key].moduleName,
+    );
+  }
+
+  private findManagedFalkorDBModule(key: SupportedPlatform): string | undefined {
+    const packageName = `@falkordblite/${key}/package.json`;
+    let packageJsonPath: string;
+    try {
+      packageJsonPath = require.resolve(packageName);
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'MODULE_NOT_FOUND'
+      ) {
+        const cached = this.cachedFalkorDBModulePath(key);
+        return existsSync(cached) ? cached : undefined;
+      }
+      throw error;
+    }
+
+    const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    if (
+      typeof packageInfo !== 'object' ||
+      packageInfo === null ||
+      !('version' in packageInfo) ||
+      typeof packageInfo.version !== 'string'
+    ) {
+      throw new Error(`Missing version in ${packageName}`);
+    }
+
+    const release = this.falkordbVersion.replace(/^v/, '');
+    if (packageInfo.version.endsWith(`-falkordb.${release}`)) {
+      const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
+      if (existsSync(npmBin)) return npmBin;
+    }
+
+    const cached = this.cachedFalkorDBModulePath(key);
+    return existsSync(cached) ? cached : undefined;
   }
 
   // -----------------------------------------------------------------------
@@ -243,36 +310,38 @@ export class BinaryManager {
 
     const key = BinaryManager.detectPlatform();
     const meta = PLATFORMS[key];
+    const managed = this.findManagedFalkorDBModule(key);
+    if (managed) return managed;
 
-    // Check platform-specific npm package first
-    try {
-      const pkgName = `@falkordblite/${key}`;
-      const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-      const npmBin = join(pkgDir, 'bin', meta.moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    } catch {
-      // Not installed — proceed with download.
-    }
-
-    const targetDir = join(this.binDir, key);
-    const targetPath = join(targetDir, meta.moduleName);
-
-    // Idempotent: already present → skip
-    if (existsSync(targetPath)) return targetPath;
-
+    const targetPath = this.cachedFalkorDBModulePath(key);
     const url =
       `https://github.com/FalkorDB/FalkorDB/releases/download/` +
-      `${this.falkordbVersion}/${meta.falkordbAsset}`;
+      `${encodeURIComponent(this.falkordbVersion)}/${meta.falkordbAsset}`;
 
+    const targetDir = dirname(targetPath);
     await mkdir(targetDir, { recursive: true });
-
-    console.log(`Downloading FalkorDB module (${meta.falkordbAsset})...`);
-    await downloadFile(url, targetPath);
-    await chmod(targetPath, 0o755);
+    const stagingDir = await mkdtemp(join(targetDir, '.download-'));
+    const stagingPath = join(stagingDir, meta.moduleName);
+    try {
+      console.log(`Downloading FalkorDB module (${meta.falkordbAsset})...`);
+      await downloadFile(url, stagingPath);
+      await chmod(stagingPath, 0o755);
+      await rename(stagingPath, targetPath);
+    } finally {
+      await rm(stagingDir, { recursive: true, force: true });
+    }
     console.log(`  saved to ${targetPath}`);
 
     return targetPath;
   }
+}
+
+function compareVersions(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +351,7 @@ export class BinaryManager {
 /**
  * Download a file from `url` to `destPath`, following HTTP redirects
  * (GitHub release URLs redirect through S3).
- * Cleans up partial files on failure.
+ * The caller cleans up the staging directory on failure.
  */
 function downloadFile(
   url: string,
@@ -327,24 +396,9 @@ function downloadFile(
         console.log(`  size: ${mb} MB`);
       }
 
-      const file = createWriteStream(destPath);
-      res.pipe(file);
-
-      file.on('finish', () => {
-        file.close(() => resolve());
-      });
-
-      file.on('error', (err) => {
-        file.close(() => {
-          unlink(destPath).catch(() => {});
-          reject(err);
-        });
-      });
+      pipeline(res, createWriteStream(destPath)).then(resolve, reject);
     });
 
-    req.on('error', (err) => {
-      unlink(destPath).catch(() => {});
-      reject(err);
-    });
+    req.on('error', reject);
   });
 }

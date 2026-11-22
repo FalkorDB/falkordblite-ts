@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { BinaryManager } from '../src/binary-manager';
 import { FalkorDB } from '../src/falkordb';
 import { FalkorDB as FalkorDBClient } from 'falkordb';
 import { makeTempDir, onCleanup, cleanupAll } from './helpers';
@@ -30,6 +33,54 @@ describe('ephemeral mode', () => {
     await db.close();
 
     expect(db.isRunning).toBe(false);
+  });
+
+  it('starts FalkorDB 6.2.0 by default', async () => {
+    const db = await openTracked();
+    const client = await FalkorDBClient.connect({
+      socket: { path: db.socketPath },
+    });
+
+    try {
+      const connection = await client.connection;
+      const modules = await connection.sendCommand(['MODULE', 'LIST']);
+      expect(modules).toEqual(expect.arrayContaining([
+        expect.arrayContaining(['name', 'graph', 'ver', 60200]),
+      ]));
+    } finally {
+      await client.close();
+      await db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Platform package Redis
+// ---------------------------------------------------------------------------
+
+function packagedRedisServer(): string | undefined {
+  try {
+    const key = BinaryManager.detectPlatform();
+    const bin = join(dirname(require.resolve(`@falkordblite/${key}/package.json`)), 'bin', 'redis-server');
+    return existsSync(bin) ? bin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const packagedRedis = packagedRedisServer();
+
+(packagedRedis ? describe : describe.skip)('platform package Redis', () => {
+  it('starts the bundled redis-server with the default module and runs a query', async () => {
+    const db = await openTracked({ redisServerPath: packagedRedis });
+    try {
+      const result = await db.selectGraph('bundled').query<{ n: number }>(
+        'CREATE (:Node {v: 1}) WITH 1 AS x MATCH (n:Node) RETURN count(n) AS n',
+      );
+      expect(result.data).toEqual([{ n: 1 }]);
+    } finally {
+      await db.close();
+    }
   });
 });
 

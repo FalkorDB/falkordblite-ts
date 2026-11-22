@@ -125,6 +125,20 @@ describe('ServerManager', () => {
       await expect(server.start()).rejects.toThrow('Failed to spawn');
     });
 
+    it('reports server output when it exits before becoming ready', async () => {
+      const dbDir = await makeTempDir();
+      const server = new ServerManager({
+        redisServerPath: process.execPath,
+        config: 'console.log("unsupported graph encoding");',
+        socketPath: join(dbDir, 'test.sock'),
+        startupTimeoutMs: 3_000,
+      });
+
+      await expect(server.start()).rejects.toThrow(
+        /exited with code 0 before becoming ready[\s\S]*unsupported graph encoding/,
+      );
+    });
+
     it('throws when the loaded module does not exist', async () => {
       const dbDir = await makeTempDir();
       const socketPath = join(dbDir, 'test.sock');
