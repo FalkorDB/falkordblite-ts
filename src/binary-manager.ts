@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { existsSync, createWriteStream, readFileSync } from 'node:fs';
-import { chmod, mkdir, unlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { platform, arch } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { get as httpsGet } from 'node:https';
 import { get as httpGet } from 'node:http';
+import { pipeline } from 'node:stream/promises';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -122,7 +123,7 @@ export class BinaryManager {
    * Ensure all required binaries are available.
    *
    * - Downloads the FalkorDB module from GitHub if not already present.
-   * - Verifies redis-server is reachable (user path → bin/ → system PATH).
+   * - Verifies redis-server is reachable (user path → bin/ → system PATH → platform package).
    *
    * Idempotent: skips downloads when the target file already exists.
    */
@@ -172,7 +173,11 @@ export class BinaryManager {
       // Platform detection failed — skip bin/ check, fall through to PATH.
     }
 
-    // 3. Platform-specific npm package (@falkordblite/<platform>)
+    // Prefer the system Redis so installing a platform package does not downgrade it.
+    const system = BinaryManager.findInSystemPath('redis-server');
+    if (system) return system;
+
+    // 4. Platform-specific npm package (@falkordblite/<platform>)
     try {
       const key = BinaryManager.detectPlatform();
       const pkgName = `@falkordblite/${key}`;
@@ -180,12 +185,8 @@ export class BinaryManager {
       const npmBin = join(pkgDir, 'bin', PLATFORMS[key].redisServerBin);
       if (existsSync(npmBin)) return npmBin;
     } catch {
-      // Package not installed — fall through to system PATH.
+      // Package not installed.
     }
-
-    // 4. System PATH
-    const system = BinaryManager.findInSystemPath('redis-server');
-    if (system) return system;
 
     throw new Error(
       'redis-server not found. Install it with:\n' +
@@ -290,11 +291,18 @@ export class BinaryManager {
       `https://github.com/FalkorDB/FalkorDB/releases/download/` +
       `${encodeURIComponent(this.falkordbVersion)}/${meta.falkordbAsset}`;
 
-    await mkdir(dirname(targetPath), { recursive: true });
-
-    console.log(`Downloading FalkorDB module (${meta.falkordbAsset})...`);
-    await downloadFile(url, targetPath);
-    await chmod(targetPath, 0o755);
+    const targetDir = dirname(targetPath);
+    await mkdir(targetDir, { recursive: true });
+    const stagingDir = await mkdtemp(join(targetDir, '.download-'));
+    const stagingPath = join(stagingDir, meta.moduleName);
+    try {
+      console.log(`Downloading FalkorDB module (${meta.falkordbAsset})...`);
+      await downloadFile(url, stagingPath);
+      await chmod(stagingPath, 0o755);
+      await rename(stagingPath, targetPath);
+    } finally {
+      await rm(stagingDir, { recursive: true, force: true });
+    }
     console.log(`  saved to ${targetPath}`);
 
     return targetPath;
@@ -308,7 +316,7 @@ export class BinaryManager {
 /**
  * Download a file from `url` to `destPath`, following HTTP redirects
  * (GitHub release URLs redirect through S3).
- * Cleans up partial files on failure.
+ * The caller cleans up the staging directory on failure.
  */
 function downloadFile(
   url: string,
@@ -353,24 +361,9 @@ function downloadFile(
         console.log(`  size: ${mb} MB`);
       }
 
-      const file = createWriteStream(destPath);
-      res.pipe(file);
-
-      file.on('finish', () => {
-        file.close(() => resolve());
-      });
-
-      file.on('error', (err) => {
-        file.close(() => {
-          unlink(destPath).catch(() => {});
-          reject(err);
-        });
-      });
+      pipeline(res, createWriteStream(destPath)).then(resolve, reject);
     });
 
-    req.on('error', (err) => {
-      unlink(destPath).catch(() => {});
-      reject(err);
-    });
+    req.on('error', reject);
   });
 }

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { createServer, get } from 'node:http';
+import https from 'node:https';
 import { platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
 import { BinaryManager, FALKORDB_VERSION } from '../src/binary-manager';
@@ -229,6 +231,58 @@ describe('BinaryManager', () => {
       }));
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
       expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);
+
+      const bundledRedis = join(packageDir, 'bin', 'redis-server');
+      await writeFile(bundledRedis, '');
+      const systemRedis = jest.spyOn(IsolatedBinaryManager, 'findInSystemPath');
+      try {
+        systemRedis.mockReturnValue(process.execPath);
+        expect(upgraded.getRedisServerPath()).toBe(process.execPath);
+        systemRedis.mockReturnValue(undefined);
+        expect(upgraded.getRedisServerPath()).toBe(await realpath(bundledRedis));
+      } finally {
+        systemRedis.mockRestore();
+      }
+    });
+
+    it('does not cache a truncated download and retries on the next call', async () => {
+      const binDir = await makeTempDir();
+      const version = 'v0.0.0-download-test';
+      const target = cachedModulePath(binDir, version);
+      const bm = new BinaryManager({
+        binDir,
+        falkordbVersion: version,
+        redisServerPath: process.execPath,
+      });
+      const module = 'complete module';
+      let requests = 0;
+      const server = createServer((_req, res) => {
+        res.writeHead(200, { 'Content-Length': module.length, Connection: 'close' });
+        res.end(++requests === 1 ? 'partial' : module);
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', resolve);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a TCP listener');
+      const download = jest.spyOn(https, 'get').mockImplementation((_url, options, callback) =>
+        get(`http://127.0.0.1:${address.port}`, typeof options === 'function' ? options : callback),
+      );
+      try {
+        await expect(bm.ensureBinaries()).rejects.toThrow();
+        expect(await readdir(dirname(target))).toEqual([]);
+        expect(() => bm.getFalkorDBModulePath()).toThrow('FalkorDB module not found');
+
+        expect((await bm.ensureBinaries()).falkordbModulePath).toBe(target);
+        expect(await readFile(target, 'utf8')).toBe(module);
+        expect(requests).toBe(2);
+      } finally {
+        download.mockRestore();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => error ? reject(error) : resolve()),
+        );
+      }
     });
 
     it('keeps custom release tags inside the binary cache', async () => {
@@ -250,14 +304,10 @@ describe('BinaryManager', () => {
   describe('npm package resolution', () => {
     const hasRedisInPath = () => BinaryManager.findInSystemPath('redis-server');
 
-    (hasRedisInPath() ? it : it.skip)('attempts to resolve redis-server from npm package before system PATH', () => {
-      // This test verifies the resolution order without requiring the npm package
+    (hasRedisInPath() ? it : it.skip)('prefers system Redis over the platform package', () => {
       const bm = new BinaryManager({ binDir: '/nonexistent-bin-dir' });
       const result = bm.getRedisServerPath();
-      
-      // Should find redis-server either from npm package or system PATH
-      expect(result).toBeDefined();
-      expect(existsSync(result)).toBe(true);
+      expect(result).toBe(hasRedisInPath());
     });
 
     (hasRedisInPath() ? it : it.skip)('attempts to resolve falkordb module from npm package before download', async () => {

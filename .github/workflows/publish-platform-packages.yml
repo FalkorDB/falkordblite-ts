@@ -6,7 +6,7 @@ on:
       redis_version:
         description: 'Redis version to build'
         required: true
-        default: '8.6.2'
+        default: '8.10.3'
       falkordb_version:
         description: 'FalkorDB release tag'
         required: true
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Build Redis from source
@@ -45,7 +45,7 @@ jobs:
 
           tar xzf "${REDIS_TARBALL}"
           cd "redis-${{ inputs.redis_version }}"
-          make redis-server -j$(command -v nproc >/dev/null 2>&1 && nproc || sysctl -n hw.ncpu)
+          make redis-server -j"$(getconf _NPROCESSORS_ONLN)"
           mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
           cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
           chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
@@ -65,7 +65,13 @@ jobs:
           chmod +x "${FALKORDB_SO}"
 
       - name: Verify redis-server
-        run: ./packages/${{ matrix.platform }}/bin/redis-server --version
+        env:
+          EXPECTED_REDIS_VERSION: ${{ inputs.redis_version }}
+        run: |
+          set -euo pipefail
+          version="$(./packages/${{ matrix.platform }}/bin/redis-server --version)"
+          echo "$version"
+          [[ "$version" == "Redis server v=${EXPECTED_REDIS_VERSION} "* ]]
 
       - name: Update npm
         run: npm install -g npm@latest
@@ -74,7 +80,7 @@ jobs:
         run: |
           cd "packages/${{ matrix.platform }}"
           # Derive version from Redis and FalkorDB versions
-          # Redis 8.6.2 + FalkorDB v6.2.0 -> 8.6.2-falkordb.6.2.0
+          # Redis 8.10.3 + FalkorDB v6.2.0 -> 8.10.3-falkordb.6.2.0
           FALKORDB_VERSION="${{ inputs.falkordb_version }}"
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
           PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
