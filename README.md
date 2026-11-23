@@ -155,7 +155,8 @@ Contributions are welcome. Please open an issue for major changes, and ensure
 
 When changing the bundled Redis or FalkorDB version, run
 `packages/update-license-files.sh <redis_version> <falkordb_version>` (requires
-Redis >= 8.0.0, FalkorDB >= v6.2.0, Python >= 3.9, and Cargo) and update
+Redis >= 8.0.0, FalkorDB >= v6.2.0, Python >= 3.9, and Cargo >= 1.85.0, the
+minimum tested for the edition-2024 manifests) and update
 `LICENSE`, `NOTICE`, and this README in the same PR. When the macOS asset's
 toolchain changes, also set `MACOS_LLVM_VERSION` and `MACOS_OPENSSL_VERSION`;
 when the Linux asset's toolchain changes, set `LINUX_LLVM_VERSION`. Use the

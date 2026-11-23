@@ -50,6 +50,18 @@ for required_cmd in curl python3 cargo; do
   fi
 done
 
+cargo_version_output="$(cargo --version)"
+if [[ ! "${cargo_version_output}" =~ ^cargo[[:space:]]+([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+  echo "Unable to determine Cargo version from: ${cargo_version_output}" >&2
+  exit 1
+fi
+cargo_major="${BASH_REMATCH[1]}"
+cargo_minor="${BASH_REMATCH[2]}"
+if (( cargo_major < 1 || (cargo_major == 1 && cargo_minor < 85) )); then
+  echo "Cargo 1.85.0 or later is required (found ${cargo_version_output})." >&2
+  exit 1
+fi
+
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
   echo "Python 3.9 or later is required for python3." >&2
   exit 1
@@ -1080,16 +1092,31 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
         }
         for rel, m in sorted(members_by_rel.items()):
             if rel == "Cargo.toml":
-                toml_txt = crate_tf.extractfile(m).read().decode("utf-8", "replace")
-                m_lic = re.search(r'^license\s*=\s*"([^"]+)"', toml_txt, re.M)
-                if m_lic:
-                    lic_expr = m_lic.group(1)
-                m_license_file = re.search(r'^license-file\s*=\s*"([^"]+)"', toml_txt, re.M)
-                if m_license_file:
-                    license_file = m_license_file.group(1)
-                m_repo = re.search(r'^repository\s*=\s*"([^"]+)"', toml_txt, re.M)
-                if m_repo:
-                    repo_url = m_repo.group(1)
+                with tempfile.TemporaryDirectory(
+                    prefix="crate-manifest-", dir=tmp_dir
+                ) as manifest_dir:
+                    crate_root = safe_extract_tar_regular_files(crate_tf, manifest_dir)
+                    manifest_path = os.path.join(crate_root, "Cargo.toml")
+                    try:
+                        manifest_output = subprocess.check_output(
+                            [
+                                "cargo",
+                                "read-manifest",
+                                "--manifest-path",
+                                manifest_path,
+                            ],
+                            stderr=subprocess.PIPE,
+                        )
+                    except subprocess.CalledProcessError as exc:
+                        error = exc.stderr.decode("utf-8", "replace") if exc.stderr else str(exc)
+                        raise SystemExit(
+                            f"Unable to parse Cargo.toml for crate {name} {ver}: "
+                            f"{error.strip()}"
+                        ) from exc
+                    manifest_data = json.loads(manifest_output.decode("utf-8"))
+                lic_expr = manifest_data.get("license") or "unspecified"
+                license_file = manifest_data.get("license_file")
+                repo_url = manifest_data.get("repository")
             elif rel == ".cargo_vcs_info.json":
                 vcs_data = json.loads(
                     crate_tf.extractfile(m).read().decode("utf-8", "replace")
@@ -1337,20 +1364,107 @@ bin/falkordb.so
     ${FALKORDB_TREE}/deps/native-deps.lock
 EOF
 
-for platform in "${PLATFORMS[@]}"; do
-  dest="${PACKAGES_DIR}/${platform}"
-  (
-    lock_dir="${dest}/.update-license-files.lock"
-    if ! mkdir "$lock_dir" 2>/dev/null; then
-      echo "Unable to acquire license update lock at ${lock_dir}; another update may be in progress." >&2
-      exit 1
-    fi
-    trap 'rmdir "$lock_dir"' EXIT
-    cp "$TMP_DIR"/LICENSE-REDIS.txt "$TMP_DIR"/REDISCONTRIBUTIONS.txt \
-      "$TMP_DIR"/LICENSE-FALKORDB "$TMP_DIR"/LICENSE-SSPL "$TMP_DIR"/LICENSE-AGPL \
-      "$TMP_DIR"/LICENSE-FALKORDB-SSPL "$TMP_DIR"/LICENSE-FALKORDB-AGPL \
-      "$TMP_DIR"/NOTICE "$dest/"
-    cp "$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt" "${dest}/THIRD-PARTY-NOTICES.txt"
-  )
-  echo "Updated license files in ${dest}"
+lock_dir="${PACKAGES_DIR}/.update-license-files.lock"
+lock_wait_seconds=0
+until mkdir "$lock_dir" 2>/dev/null; do
+  if (( lock_wait_seconds >= 120 )); then
+    echo "Timed out waiting for license update lock at ${lock_dir}; remove it only if no update is running." >&2
+    exit 1
+  fi
+  sleep 1
+  lock_wait_seconds=$((lock_wait_seconds + 1))
 done
+cleanup_update() {
+  rmdir "$lock_dir" || echo "Unable to remove license update lock at ${lock_dir}." >&2
+  rm -rf "$TMP_DIR"
+}
+trap cleanup_update EXIT
+
+PLATFORMS_CSV="$(IFS=,; echo "${PLATFORMS[*]}")" \
+PACKAGES_DIR="${PACKAGES_DIR}" TMP_DIR="${TMP_DIR}" \
+python3 - <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+
+packages_dir = Path(os.environ["PACKAGES_DIR"])
+tmp_dir = Path(os.environ["TMP_DIR"])
+platforms = [p for p in os.environ["PLATFORMS_CSV"].split(",") if p]
+shared_files = [
+    "LICENSE-REDIS.txt",
+    "REDISCONTRIBUTIONS.txt",
+    "LICENSE-FALKORDB",
+    "LICENSE-SSPL",
+    "LICENSE-AGPL",
+    "LICENSE-FALKORDB-SSPL",
+    "LICENSE-FALKORDB-AGPL",
+    "NOTICE",
+]
+
+transactions: list[tuple[Path, Path, Path]] = []
+prepared: list[tuple[Path, Path, Path]] = []
+installed: list[tuple[Path, Path]] = []
+rollback_failed = False
+
+try:
+    for platform in platforms:
+        destination = packages_dir / platform
+        transaction_dir = Path(
+            tempfile.mkdtemp(prefix=".update-license-files-", dir=destination)
+        )
+        stage_dir = transaction_dir / "stage"
+        backup_dir = transaction_dir / "backup"
+        transactions.append((transaction_dir, stage_dir, backup_dir))
+        stage_dir.mkdir()
+        backup_dir.mkdir()
+
+        files = [(name, name) for name in shared_files]
+        files.append(
+            (f"THIRD-PARTY-NOTICES.{platform}.txt", "THIRD-PARTY-NOTICES.txt")
+        )
+        for source_name, destination_name in files:
+            source = tmp_dir / source_name
+            staged = stage_dir / destination_name
+            shutil.copy2(source, staged)
+            prepared.append(
+                (destination / destination_name, staged, backup_dir / destination_name)
+            )
+
+    for destination, _, backup in prepared:
+        if os.path.lexists(destination):
+            shutil.copy2(destination, backup, follow_symlinks=False)
+
+    for destination, staged, backup in prepared:
+        os.replace(staged, destination)
+        installed.append((destination, backup))
+except BaseException as exc:
+    rollback_errors: list[str] = []
+    for destination, backup in reversed(installed):
+        try:
+            if os.path.lexists(backup):
+                os.replace(backup, destination)
+            elif os.path.lexists(destination):
+                destination.unlink()
+        except OSError as rollback_error:
+            rollback_errors.append(f"{destination}: {rollback_error}")
+    if rollback_errors:
+        rollback_failed = True
+        retained = ", ".join(str(transaction[0]) for transaction in transactions)
+        print(
+            "License installation failed and rollback was incomplete; "
+            f"preserved recovery files in {retained}: {'; '.join(rollback_errors)}",
+            file=sys.stderr,
+        )
+    raise
+finally:
+    if not rollback_failed:
+        for transaction_dir, _, _ in transactions:
+            shutil.rmtree(transaction_dir)
+
+for platform in platforms:
+    print(f"Updated license files in {packages_dir / platform}")
+PY
