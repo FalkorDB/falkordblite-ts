@@ -232,6 +232,11 @@ describe('BinaryManager', () => {
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
       expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);
 
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0-license.1',
+      }));
+      expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
+
       const bundledRedis = join(packageDir, 'bin', 'redis-server');
       await writeFile(bundledRedis, '');
       const systemRedis = jest.spyOn(IsolatedBinaryManager, 'findInSystemPath');

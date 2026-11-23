@@ -51,8 +51,8 @@
     }
   },
   "optionalDependencies": {
-    "@falkordblite/linux-x64": "8.10.3-falkordb.6.2.0",
-    "@falkordblite/darwin-arm64": "8.10.3-falkordb.6.2.0"
+    "@falkordblite/linux-x64": "8.10.3-falkordb.6.2.0-license.1",
+    "@falkordblite/darwin-arm64": "8.10.3-falkordb.6.2.0-license.1"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

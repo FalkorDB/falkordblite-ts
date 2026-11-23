@@ -300,21 +300,35 @@ def is_notice_path(rel_path: str) -> bool:
     return bool(parent_parts & {"license", "licenses"}) and ext in TEXT_EXTENSIONS
 
 
-def parse_cargo_lock_sources(lock_text: str) -> dict[tuple[str, str], str | None]:
-    out: dict[tuple[str, str], str | None] = {}
+def is_license_file(rel_path: str) -> bool:
+    return bool(
+        re.match(
+            r"^(license|licence|copying|unlicense)([-_.].*)?$",
+            PurePosixPath(rel_path).name,
+            re.I,
+        )
+    )
+
+
+def parse_cargo_lock_sources(
+    lock_text: str,
+) -> dict[tuple[str, str], set[str | None]]:
+    out: dict[tuple[str, str], set[str | None]] = {}
     for block in lock_text.split("\n[[package]]\n")[1:]:
         m_name = re.search(r'^name\s*=\s*"([^"]+)"', block, re.M)
         m_ver = re.search(r'^version\s*=\s*"([^"]+)"', block, re.M)
         if not m_name or not m_ver:
             continue
         m_src = re.search(r'^source\s*=\s*"([^"]+)"', block, re.M)
-        out[(m_name.group(1), m_ver.group(1))] = m_src.group(1) if m_src else None
+        out.setdefault((m_name.group(1), m_ver.group(1)), set()).add(
+            m_src.group(1) if m_src else None
+        )
     return out
 
 
 def resolve_cargo_runtime_crates(
     workspace_dir: str, package_name: str, target_triple: str
-) -> dict[tuple[str, str], str]:
+) -> set[tuple[str, str, str]]:
     lock_path = os.path.join(workspace_dir, "Cargo.lock")
     with open(lock_path, encoding="utf-8") as f:
         lock_sources = parse_cargo_lock_sources(f.read())
@@ -335,15 +349,47 @@ def resolve_cargo_runtime_crates(
         cwd=workspace_dir,
         text=True,
     )
-    resolved: dict[tuple[str, str], str] = {}
+    resolved: set[tuple[str, str, str]] = set()
     for raw_line in output.splitlines():
-        parts = raw_line.strip().split()
-        if len(parts) < 2 or not parts[1].startswith("v"):
+        line = raw_line.strip()
+        if line.endswith(" (*)"):
+            line = line[:-4].rstrip()
+        match = re.match(r"^(\S+)\s+v(\S+)(?:\s+\((.+)\))?$", line)
+        if not match:
             continue
-        key = (parts[0], parts[1][1:])
-        src = lock_sources.get(key)
-        if src is not None:
-            resolved[key] = src
+        name, version, displayed_source = match.groups()
+        key = (name, version)
+        candidates = lock_sources.get(key, set())
+        if displayed_source and displayed_source != "*":
+            if displayed_source.startswith(("/", "file://")):
+                continue
+            matches = {
+                source
+                for source in candidates
+                if source is not None
+                and source.removeprefix("git+").startswith(displayed_source)
+            }
+            if len(matches) != 1:
+                raise SystemExit(
+                    f"Unable to match cargo tree package source for {name} {version}: "
+                    f"{displayed_source} (locked sources: {sorted(str(s) for s in candidates)})"
+                )
+            source = matches.pop()
+        else:
+            registry_sources = candidates & CRATES_IO_REGISTRY_SOURCES
+            if len(registry_sources) == 1:
+                source = next(iter(registry_sources))
+            elif len(candidates) == 1:
+                source = next(iter(candidates))
+            elif candidates:
+                raise SystemExit(
+                    f"Ambiguous locked sources for cargo tree package {name} {version}: "
+                    f"{sorted(str(s) for s in candidates)}"
+                )
+            else:
+                continue
+        if source is not None:
+            resolved.add((name, version, source))
     if not resolved:
         raise SystemExit(
             f"cargo tree resolved zero external runtime crates for {package_name} ({target_triple})"
@@ -692,12 +738,33 @@ while queue:
                 for p in rel_members
                 if len(PurePosixPath(p).parts) >= 3
                 and PurePosixPath(p).parts[0] == "deps"
+                and PurePosixPath(p).parts[1].lower()
+                not in {"test", "tests", "json_test", "example", "examples", "bench", "benches"}
                 and f"deps/{PurePosixPath(p).parts[1]}" not in submodule_paths
                 and PurePosixPath(p).parts[1] not in covered_dep_dirs
             }
         )
         for vdir in vendored_dirs:
             seen_snippets: set[str] = set()
+            captured_notice = False
+            if label == "redisearch" and vdir == "cndict":
+                friso_license_rev = "3432fa78dc8902f9968eab80831934e79eb121ce"
+                friso_license_path = "LICENSE.md"
+                friso_license_url = (
+                    "https://raw.githubusercontent.com/lionsoul2014/friso/"
+                    f"{friso_license_rev}/{friso_license_path}"
+                )
+                common_sections.append(
+                    format_notice(
+                        f"FalkorDB dependency: {label}/deps/cndict "
+                        "(Friso Chinese dictionary and tokenizer data)",
+                        f"https://github.com/FalkorDB/RediSearch/tree/{rev}/deps/cndict "
+                        f"(license: https://github.com/lionsoul2014/friso/blob/"
+                        f"{friso_license_rev}/{friso_license_path})",
+                        fetch_bytes(friso_license_url).decode("utf-8", "replace"),
+                    )
+                )
+                captured_notice = True
             for rel_path in sorted(rel_members):
                 if not rel_path.startswith(f"deps/{vdir}/"):
                     continue
@@ -712,10 +779,28 @@ while queue:
                                 readme_txt,
                             )
                         )
+                        captured_notice = True
                 elif rel_path.endswith((".c", ".h", ".hpp", ".cc", ".cpp")):
                     src_txt = read_dep_text(rel_path)
                     head120 = "\n".join(src_txt.splitlines()[:120])
                     if "Redis Source Available License" in head120:
+                        redis_header = COMMENT_BLOCK_RE.search(head120)
+                        if not redis_header:
+                            raise SystemExit(
+                                f"Redis license identifier without a comment header in "
+                                f"{label}/{rel_path}"
+                            )
+                        snippet = redis_header.group(0)
+                        if snippet not in seen_snippets:
+                            seen_snippets.add(snippet)
+                            common_sections.append(
+                                format_notice(
+                                    f"FalkorDB dependency: {label} ({rel_path})",
+                                    f"https://github.com/{repo}/blob/{rev}/{rel_path}",
+                                    snippet,
+                                )
+                            )
+                            captured_notice = True
                         continue
                     snippet = extract_comment_notice(src_txt)
                     if snippet and snippet not in seen_snippets:
@@ -727,6 +812,12 @@ while queue:
                                 snippet,
                             )
                         )
+                        captured_notice = True
+            if not captured_notice:
+                raise SystemExit(
+                    f"No license or copyright notice found for linked dependency "
+                    f"{label}/deps/{vdir} in {repo}@{rev}"
+                )
 
 # 4. Resolve per-platform Rust runtime Cargo dependencies (FalkorDB + RediSearch staticlib).
 per_platform_crates: dict[str, set[tuple[str, str, str]]] = {}
@@ -737,16 +828,12 @@ for platform in platforms:
     merged: set[tuple[str, str, str]] = set()
     if redisearch_rust_workspace is not None:
         merged.update(
-            (name, version, source)
-            for (name, version), source in resolve_cargo_runtime_crates(
+            resolve_cargo_runtime_crates(
                 redisearch_rust_workspace, "redisearch_rs", triple
-            ).items()
+            )
         )
     merged.update(
-        (name, version, source)
-        for (name, version), source in resolve_cargo_runtime_crates(
-            falkordb_src_root, "falkordb-rs", triple
-        ).items()
+        resolve_cargo_runtime_crates(falkordb_src_root, "falkordb-rs", triple)
     )
     per_platform_crates[platform] = merged
     for crate in merged:
@@ -798,7 +885,7 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
         if not re.fullmatch(r"[0-9a-f]{40}", frag):
             raise SystemExit(f"Invalid git commit fragment for crate {name} {ver}: {src}")
         gh_lics = fetch_github_repo_root_licenses(repo, frag)
-        if not gh_lics:
+        if not any(is_license_file(url) for url, _ in gh_lics):
             raise SystemExit(f"No root license files found for git crate {name} {ver} ({repo}@{frag})")
         for lic_url, lic_txt in gh_lics:
             rendered.append(
@@ -905,8 +992,9 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                 continue
             try:
                 gh_lics = fetch_github_repo_root_licenses(gh_repo, candidate_ref)
-                if gh_lics:
+                if any(is_license_file(url) for url, _ in gh_lics):
                     break
+                gh_lics = []
             except HTTPError as exc:
                 if exc.code != 404:
                     raise
@@ -918,7 +1006,7 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                     lic_txt,
                 )
             )
-        if not gh_lics:
+        if not any(is_license_file(url) for url, _ in gh_lics):
             raise SystemExit(
                 f"No license files found for crate {name} {ver} at its locked "
                 f"revision or version tags {refs_to_try}"
@@ -958,6 +1046,45 @@ for license_name in ("LICENSE-APACHE", "LICENSE-MIT"):
         )
     )
 
+rust_library_copyright_sections: dict[str, str] = {}
+for platform in platforms:
+    target_triple = PLATFORM_TARGETS[platform]
+    rustc_archive_name = f"rustc-{rust_license_source_ref}-{target_triple}.tar.xz"
+    rustc_archive_url = f"https://static.rust-lang.org/dist/{rustc_archive_name}"
+    rustc_archive_bytes = fetch_bytes(rustc_archive_url)
+    copyright_path = (
+        f"rustc-{rust_license_source_ref}-{target_triple}/"
+        "rustc/share/doc/rust/COPYRIGHT-library.html"
+    )
+    with tarfile.open(fileobj=io.BytesIO(rustc_archive_bytes), mode="r:xz") as rustc_tf:
+        try:
+            copyright_member = rustc_tf.getmember(copyright_path)
+        except KeyError as exc:
+            raise SystemExit(
+                f"Rust {rust_license_source_ref} toolchain lacks {copyright_path}"
+            ) from exc
+        copyright_file = rustc_tf.extractfile(copyright_member)
+        if copyright_file is None:
+            raise SystemExit(f"Unable to read {copyright_path} from {rustc_archive_name}")
+        rust_library_copyright = "\n".join(
+            line.rstrip(" \t")
+            for line in copyright_file.read().decode("utf-8", "replace").splitlines()
+        )
+    if (
+        "Copyright notices for The Rust Standard Library" not in rust_library_copyright
+        or "Out-of-tree dependencies" not in rust_library_copyright
+    ):
+        raise SystemExit(
+            f"Rust {rust_license_source_ref} {target_triple} standard-library "
+            "attributions are incomplete"
+        )
+    rust_library_copyright_sections[platform] = format_notice(
+        f"Rust standard-library component attributions (COPYRIGHT-library.html; "
+        f"Rust {rust_license_source_ref}, {target_triple})",
+        f"{rustc_archive_url} ({copyright_path})",
+        rust_library_copyright,
+    )
+
 for platform in platforms:
     triple = PLATFORM_TARGETS[platform]
     out_path = os.path.join(tmp_dir, f"THIRD-PARTY-NOTICES.{platform}.txt")
@@ -971,6 +1098,7 @@ for platform in platforms:
         )
         for sec in common_sections:
             notices_out.write(sec)
+        notices_out.write(rust_library_copyright_sections[platform])
         for crate_name, crate_ver, crate_src in sorted(per_platform_crates[platform]):
             for sec in crate_notice_map[(crate_name, crate_ver, crate_src)]:
                 notices_out.write(sec)
@@ -996,6 +1124,11 @@ for platform in "${PLATFORMS[@]}"; do
   grep -q "Rust standard library bundled by RediSearch (LICENSE-APACHE)" "$notices_file"
   grep -q "Rust standard library bundled by RediSearch (LICENSE-MIT)" "$notices_file"
   grep -q "The Rust Project Contributors" "$notices_file"
+  grep -q "COPYRIGHT-library.html" "$notices_file"
+  grep -q "Copyright notices for The Rust Standard Library" "$notices_file"
+  grep -q "Out-of-tree dependencies" "$notices_file"
+  grep -q "Copyright Redis Ltd. 2016 - present" "$notices_file"
+  grep -q "aho-corasick-1.1.4" "$notices_file"
   grep -q "FalkorDB Rust crate: lazy_static " "$notices_file"
   grep -q "FalkorDB Rust crate: roaring " "$notices_file"
 done

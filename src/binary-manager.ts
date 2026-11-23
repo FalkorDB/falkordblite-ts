@@ -284,7 +284,13 @@ export class BinaryManager {
     }
 
     const release = this.falkordbVersion.replace(/^v/, '');
-    if (packageInfo.version.endsWith(`-falkordb.${release}`)) {
+    const expectedSuffix = `-falkordb.${release}`;
+    const suffixIndex = packageInfo.version.lastIndexOf(expectedSuffix);
+    const suffixEnd = suffixIndex + expectedSuffix.length;
+    if (
+      suffixIndex > 0 &&
+      (suffixEnd === packageInfo.version.length || packageInfo.version[suffixEnd] === '-')
+    ) {
       const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
       if (existsSync(npmBin)) return npmBin;
     }

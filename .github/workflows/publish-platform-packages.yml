@@ -113,9 +113,9 @@ jobs:
           set -euo pipefail
           cd "packages/${PLATFORM}"
           # Derive version from Redis and FalkorDB versions
-          # Redis 8.10.3 + FalkorDB v6.2.0 -> 8.10.3-falkordb.6.2.0
+          # The license.1 suffix is a repackaging revision, not a binary version change.
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
-          PACKAGE_VERSION="${REDIS_VERSION}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          PACKAGE_VERSION="${REDIS_VERSION}-falkordb.${FALKORDB_VERSION_CLEAN}-license.1"
           npm version "${PACKAGE_VERSION}" --no-git-tag-version
 
       - name: Verify package contents
@@ -143,6 +143,10 @@ jobs:
             "Rust standard library bundled by RediSearch (LICENSE-APACHE)" \
             "Rust standard library bundled by RediSearch (LICENSE-MIT)" \
             "The Rust Project Contributors" \
+            "COPYRIGHT-library.html" \
+            "Copyright notices for The Rust Standard Library" \
+            "Out-of-tree dependencies" \
+            "aho-corasick-1.1.4" \
             "FalkorDB Rust crate: lazy_static " \
             "FalkorDB Rust crate: roaring "
           do
