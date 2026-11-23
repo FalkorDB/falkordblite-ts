@@ -217,6 +217,22 @@ describe('BinaryManager', () => {
       expect(resolvePackagedFalkorDBModule(packageJson, 'v6.2.0-license.1', key)).toBeUndefined();
     });
 
+    it('rejects invalid package metadata and missing packaged modules', async () => {
+      const dir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const packageJson = join(dir, 'package.json');
+      await writeFile(packageJson, JSON.stringify({}));
+      expect(() => resolvePackagedFalkorDBModule(packageJson, 'v6.2.0', key))
+        .toThrow('Missing version');
+
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0',
+      }));
+      expect(resolvePackagedFalkorDBModule(packageJson, 'v6.2.0', key))
+        .toBeUndefined();
+      expect(matchesFalkorDBPackageRelease('8.10.3', 'v6.2.0')).toBe(false);
+    });
+
     it('does not reuse legacy or differently versioned cached modules', async () => {
       const binDir = await makeTempDir();
       const key = BinaryManager.detectPlatform();
