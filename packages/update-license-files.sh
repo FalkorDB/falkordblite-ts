@@ -1182,10 +1182,18 @@ EOF
 
 for platform in "${PLATFORMS[@]}"; do
   dest="${PACKAGES_DIR}/${platform}"
-  cp "$TMP_DIR"/LICENSE-REDIS.txt "$TMP_DIR"/REDISCONTRIBUTIONS.txt \
-    "$TMP_DIR"/LICENSE-FALKORDB "$TMP_DIR"/LICENSE-SSPL "$TMP_DIR"/LICENSE-AGPL \
-    "$TMP_DIR"/LICENSE-FALKORDB-SSPL "$TMP_DIR"/LICENSE-FALKORDB-AGPL \
-    "$TMP_DIR"/NOTICE "$dest/"
-  cp "$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt" "${dest}/THIRD-PARTY-NOTICES.txt"
+  (
+    lock_dir="${dest}/.update-license-files.lock"
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+      echo "Unable to acquire license update lock at ${lock_dir}; another update may be in progress." >&2
+      exit 1
+    fi
+    trap 'rmdir "$lock_dir"' EXIT
+    cp "$TMP_DIR"/LICENSE-REDIS.txt "$TMP_DIR"/REDISCONTRIBUTIONS.txt \
+      "$TMP_DIR"/LICENSE-FALKORDB "$TMP_DIR"/LICENSE-SSPL "$TMP_DIR"/LICENSE-AGPL \
+      "$TMP_DIR"/LICENSE-FALKORDB-SSPL "$TMP_DIR"/LICENSE-FALKORDB-AGPL \
+      "$TMP_DIR"/NOTICE "$dest/"
+    cp "$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt" "${dest}/THIRD-PARTY-NOTICES.txt"
+  )
   echo "Updated license files in ${dest}"
 done
