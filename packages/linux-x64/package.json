@@ -1,12 +1,24 @@
 {
   "name": "@falkordblite/linux-x64",
   "version": "0.1.1",
-  "description": "FalkorDB + Redis pre-built binaries for Linux x64",
+  "description": "Pre-built Redis (RSALv2/SSPLv1/AGPLv3) and FalkorDB (SSPLv1/AGPLv3) binaries for Linux x64; see LICENSE",
   "os": ["linux"],
   "cpu": ["x64"],
   "main": "package.json",
-  "files": ["bin/"],
-  "license": "MIT",
+  "files": [
+    "bin/",
+    "LICENSE",
+    "LICENSE-REDIS.txt",
+    "REDISCONTRIBUTIONS.txt",
+    "LICENSE-FALKORDB",
+    "LICENSE-SSPL",
+    "LICENSE-AGPL",
+    "LICENSE-FALKORDB-SSPL",
+    "LICENSE-FALKORDB-AGPL",
+    "THIRD-PARTY-NOTICES.txt",
+    "NOTICE"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/FalkorDB/falkordblite-ts"

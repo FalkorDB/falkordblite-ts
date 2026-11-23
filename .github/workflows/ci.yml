@@ -65,3 +65,76 @@ jobs:
           flags: unittests
           name: codecov-falkordblite-ts
           fail_ci_if_error: false
+
+  packaged-binary-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            falkordb_asset: falkordb-x64.so
+          - os: macos-latest
+            platform: darwin-arm64
+            falkordb_asset: falkordb-macos-arm64v8.so
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install Linux runtime dependency
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgomp1
+
+      - name: Build and pack platform binaries
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          FALKORDB_ASSET: ${{ matrix.falkordb_asset }}
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./package.json').optionalDependencies['@falkordblite/${PLATFORM}']")"
+          if [[ ! "${PACKAGE_VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-falkordb\.([0-9]+\.[0-9]+\.[0-9]+)-license\.[0-9]+$ ]]; then
+            echo "Unexpected platform package version: ${PACKAGE_VERSION}" >&2
+            exit 1
+          fi
+          REDIS_VERSION="${BASH_REMATCH[1]}"
+          FALKORDB_VERSION="v${BASH_REMATCH[2]}"
+          REDIS_TARBALL="redis-${REDIS_VERSION}.tar.gz"
+          curl --fail --location --silent --show-error \
+            -o "${REDIS_TARBALL}" \
+            "https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz"
+          tar xzf "${REDIS_TARBALL}"
+          make -C "redis-${REDIS_VERSION}" redis-server -j"$(getconf _NPROCESSORS_ONLN)"
+
+          PACKAGE_DIR="packages/${PLATFORM}"
+          mkdir -p "${PACKAGE_DIR}/bin"
+          cp "redis-${REDIS_VERSION}/src/redis-server" "${PACKAGE_DIR}/bin/"
+          curl --fail --location --silent --show-error \
+            -o "${PACKAGE_DIR}/bin/falkordb.so" \
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${FALKORDB_VERSION}/${FALKORDB_ASSET}"
+          chmod +x "${PACKAGE_DIR}/bin/redis-server" "${PACKAGE_DIR}/bin/falkordb.so"
+          cd "${PACKAGE_DIR}"
+          npm version "${PACKAGE_VERSION}" --no-git-tag-version
+          TARBALL="$(npm pack --silent)"
+          echo "PLATFORM_TARBALL=${TARBALL}" >> "$GITHUB_ENV"
+
+      - name: Install packed platform package
+        run: |
+          npm install --no-save --ignore-scripts --package-lock=false "./packages/${{ matrix.platform }}/${PLATFORM_TARBALL}"
+          node -e "const fs = require('node:fs'); const path = require('node:path'); const pkg = require.resolve('@falkordblite/${{ matrix.platform }}/package.json'); const binDir = path.join(path.dirname(pkg), 'bin'); for (const file of ['redis-server', 'falkordb.so']) { const binary = path.join(binDir, file); if (!fs.existsSync(binary)) throw new Error('Packed platform binary is missing: ' + binary); console.log('Using ' + binary); }"
+
+      - name: Run packaged Redis graph-query smoke test
+        run: npm test -- --runInBand tests/e2e.test.ts -t "platform package Redis"

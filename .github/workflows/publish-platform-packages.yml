@@ -11,9 +11,78 @@ on:
         description: 'FalkorDB release tag'
         required: true
         default: 'v6.2.0'
+      macos_llvm_version:
+        description: 'LLVM version used by the macOS FalkorDB asset'
+        required: true
+        default: '23.1.5'
+      macos_openssl_version:
+        description: 'OpenSSL version used by the macOS FalkorDB asset'
+        required: true
+        default: '3.5.9'
+      linux_llvm_version:
+        description: 'LLVM version used by the Linux FalkorDB asset'
+        required: true
+        default: '23.1.6'
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    env:
+      REDIS_VERSION: ${{ inputs.redis_version }}
+      FALKORDB_VERSION: ${{ inputs.falkordb_version }}
+      MACOS_LLVM_VERSION: ${{ inputs.macos_llvm_version }}
+      MACOS_OPENSSL_VERSION: ${{ inputs.macos_openssl_version }}
+      LINUX_LLVM_VERSION: ${{ inputs.linux_llvm_version }}
+    steps:
+      - name: Validate version and toolchain inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "${REDIS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid redis_version: ${REDIS_VERSION}" >&2
+            exit 1
+          fi
+          IFS=. read -r redis_major _ _ <<<"${REDIS_VERSION}"
+          if (( redis_major < 8 )); then
+            echo "redis_version must be >= 8.0.0 (got ${REDIS_VERSION})" >&2
+            exit 1
+          fi
+          if [[ ! "${FALKORDB_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid falkordb_version: ${FALKORDB_VERSION} (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+          IFS=. read -r fdb_major fdb_minor _ <<<"${FALKORDB_VERSION#v}"
+          if (( fdb_major < 6 || (fdb_major == 6 && fdb_minor < 2) )); then
+            echo "falkordb_version must be >= v6.2.0 (got ${FALKORDB_VERSION})" >&2
+            exit 1
+          fi
+          # Reviewed against the exact upstream v6.2.0 asset build records.
+          # New asset releases require an explicit mapping update before publishing.
+          case "${FALKORDB_VERSION}" in
+            v6.2.0)
+              expected_macos_llvm_version=23.1.5
+              expected_macos_openssl_version=3.5.9
+              expected_linux_llvm_version=23.1.6
+              ;;
+            *)
+              echo "No reviewed toolchain mapping for ${FALKORDB_VERSION}" >&2
+              exit 1
+              ;;
+          esac
+          [[ "${MACOS_LLVM_VERSION}" == "${expected_macos_llvm_version}" ]] || {
+            echo "macos_llvm_version must be ${expected_macos_llvm_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+          [[ "${MACOS_OPENSSL_VERSION}" == "${expected_macos_openssl_version}" ]] || {
+            echo "macos_openssl_version must be ${expected_macos_openssl_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+          [[ "${LINUX_LLVM_VERSION}" == "${expected_linux_llvm_version}" ]] || {
+            echo "linux_llvm_version must be ${expected_linux_llvm_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+
   build-and-publish:
+    needs: validate-inputs
     permissions:
       contents: read
       id-token: write
@@ -27,6 +96,14 @@ jobs:
             platform: darwin-arm64
             falkordb_asset: falkordb-macos-arm64v8.so
     runs-on: ${{ matrix.os }}
+    env:
+      REDIS_VERSION: ${{ inputs.redis_version }}
+      FALKORDB_VERSION: ${{ inputs.falkordb_version }}
+      MACOS_LLVM_VERSION: ${{ inputs.macos_llvm_version }}
+      MACOS_OPENSSL_VERSION: ${{ inputs.macos_openssl_version }}
+      LINUX_LLVM_VERSION: ${{ inputs.linux_llvm_version }}
+      PLATFORM: ${{ matrix.platform }}
+      FALKORDB_ASSET: ${{ matrix.falkordb_asset }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -37,56 +114,113 @@ jobs:
       - name: Build Redis from source
         run: |
           set -euo pipefail
-          REDIS_TARBALL="redis-${{ inputs.redis_version }}.tar.gz"
+          REDIS_TARBALL="redis-${REDIS_VERSION}.tar.gz"
 
           curl --fail --location --silent --show-error \
             -o "${REDIS_TARBALL}" \
-            "https://github.com/redis/redis/archive/refs/tags/${{ inputs.redis_version }}.tar.gz"
+            "https://github.com/redis/redis/archive/refs/tags/${REDIS_VERSION}.tar.gz"
 
           tar xzf "${REDIS_TARBALL}"
-          cd "redis-${{ inputs.redis_version }}"
+          cd "redis-${REDIS_VERSION}"
           make redis-server -j"$(getconf _NPROCESSORS_ONLN)"
-          mkdir -p "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin"
-          cp src/redis-server "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/"
-          chmod +x "$GITHUB_WORKSPACE/packages/${{ matrix.platform }}/bin/redis-server"
+          mkdir -p "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin"
+          cp src/redis-server "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin/"
+          chmod +x "$GITHUB_WORKSPACE/packages/${PLATFORM}/bin/redis-server"
 
       - name: Download FalkorDB module
         run: |
           set -euo pipefail
-          FALKORDB_DIR="packages/${{ matrix.platform }}/bin"
+          FALKORDB_DIR="packages/${PLATFORM}/bin"
           mkdir -p "${FALKORDB_DIR}"
           FALKORDB_SO="${FALKORDB_DIR}/falkordb.so"
-          FALKORDB_ASSET="${{ matrix.falkordb_asset }}"
 
           curl --fail --location --silent --show-error \
             -o "${FALKORDB_SO}" \
-            "https://github.com/FalkorDB/FalkorDB/releases/download/${{ inputs.falkordb_version }}/${FALKORDB_ASSET}"
+            "https://github.com/FalkorDB/FalkorDB/releases/download/${FALKORDB_VERSION}/${FALKORDB_ASSET}"
 
           chmod +x "${FALKORDB_SO}"
 
       - name: Verify redis-server
-        env:
-          EXPECTED_REDIS_VERSION: ${{ inputs.redis_version }}
         run: |
           set -euo pipefail
-          version="$(./packages/${{ matrix.platform }}/bin/redis-server --version)"
+          version="$("./packages/${PLATFORM}/bin/redis-server" --version)"
           echo "$version"
-          [[ "$version" == "Redis server v=${EXPECTED_REDIS_VERSION} "* ]]
+          expected_prefix="Redis server v=${REDIS_VERSION} "
+          [[ "$version" == "${expected_prefix}"* ]]
+
+      - name: Generate license files and NOTICE
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./packages/update-license-files.sh "${REDIS_VERSION}" "${FALKORDB_VERSION}" "${PLATFORM}"
+          cat "packages/${PLATFORM}/NOTICE"
 
       - name: Update npm
         run: npm install -g npm@latest
 
       - name: Set package version
         run: |
-          cd "packages/${{ matrix.platform }}"
+          set -euo pipefail
+          cd "packages/${PLATFORM}"
           # Derive version from Redis and FalkorDB versions
-          # Redis 8.10.3 + FalkorDB v6.2.0 -> 8.10.3-falkordb.6.2.0
-          FALKORDB_VERSION="${{ inputs.falkordb_version }}"
+          # The license.1 suffix is a repackaging revision, not a binary version change.
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
-          PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"
+          PACKAGE_VERSION="${REDIS_VERSION}-falkordb.${FALKORDB_VERSION_CLEAN}-license.1"
           npm version "${PACKAGE_VERSION}" --no-git-tag-version
+
+      - name: Verify package contents
+        run: |
+          set -euo pipefail
+          cd "packages/${PLATFORM}"
+          contents="$(npm pack --dry-run --json | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8"))[0]; console.log(p.files.map(f=>f.path).join("\n"))')"
+          echo "$contents"
+          for f in bin/redis-server bin/falkordb.so LICENSE LICENSE-REDIS.txt REDISCONTRIBUTIONS.txt LICENSE-FALKORDB LICENSE-SSPL LICENSE-AGPL LICENSE-FALKORDB-SSPL LICENSE-FALKORDB-AGPL THIRD-PARTY-NOTICES.txt NOTICE; do
+            grep -qx "$f" <<<"$contents" || { echo "Missing $f in package"; exit 1; }
+          done
+          grep -q "Redis ${REDIS_VERSION}" NOTICE
+          grep -q "FalkorDB ${FALKORDB_VERSION}" NOTICE
+          for marker in \
+            "REDISCONTRIBUTIONS.txt" \
+            "Lua CJSON" \
+            "Redis dependency: lua (deps/lua/COPYRIGHT)" \
+            "Lua BitOp" \
+            "Marc Alexander Lehmann" \
+            "libuv" \
+            "s2geometry" \
+            "ScalableVectorSearch" \
+            "FalkorDB Rust crate: rquickjs " \
+            "quickjs/LICENSE" \
+            "Fabrice Bellard" \
+            "Rust standard library bundled by RediSearch (LICENSE-APACHE)" \
+            "Rust standard library bundled by RediSearch (LICENSE-MIT)" \
+            "The Rust Project Contributors" \
+            "COPYRIGHT-library.html" \
+            "Copyright notices for The Rust Standard Library" \
+            "Out-of-tree dependencies" \
+            "aho-corasick-1.1.4</h3>" \
+            "FalkorDB Rust crate: lazy_static " \
+            "FalkorDB Rust crate: roaring "
+          do
+            grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing notice marker: $marker" >&2; exit 1; }
+          done
+          if [[ "${PLATFORM}" == "darwin-arm64" ]]; then
+            for marker in \
+              "libc++ (LLVM ${MACOS_LLVM_VERSION})" \
+              "libc++abi (LLVM ${MACOS_LLVM_VERSION})" \
+              "LLVM OpenMP (libomp.a) (LLVM ${MACOS_LLVM_VERSION})" \
+              "OpenSSL ${MACOS_OPENSSL_VERSION} (libssl.a and libcrypto.a)"
+            do
+              grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing macOS notice marker: $marker" >&2; exit 1; }
+            done
+          else
+            grep -q "FalkorDB Linux static runtime dependency: LLVM OpenMP (libomp.a) (LLVM ${LINUX_LLVM_VERSION})" THIRD-PARTY-NOTICES.txt || {
+              echo "Missing Linux LLVM OpenMP notice marker" >&2
+              exit 1
+            }
+          fi
 
       - name: Publish
         run: |
-          cd "packages/${{ matrix.platform }}"
+          cd "packages/${PLATFORM}"
           npm publish --access public --tag next --provenance

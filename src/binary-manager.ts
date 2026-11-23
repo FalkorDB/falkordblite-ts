@@ -15,6 +15,27 @@ import { pipeline } from 'node:stream/promises';
 /** Default FalkorDB release version to download. */
 export const FALKORDB_VERSION = 'v6.2.0';
 
+export function matchesFalkorDBPackageRelease(
+  packageVersion: string,
+  falkordbVersion: string,
+): boolean {
+  const release = falkordbVersion.replace(/^v/, '');
+  const packageRelease = /-falkordb\.(.+)$/.exec(packageVersion)?.[1];
+  const packagingRevision = packageRelease?.match(/^(.*)-license\.\d+$/);
+  const packagedRelease = packagingRevision?.[1] ?? packageRelease;
+  const isPlainRelease = /^\d+\.\d+\.\d+$/.test(release);
+  const isPlainRevisionBase =
+    !!packagingRevision && /^\d+\.\d+\.\d+$/.test(packagingRevision[1]);
+  return (
+    packagedRelease === release &&
+    (!packagingRevision || isPlainRelease)
+  ) || (
+    !!packagingRevision &&
+    packageRelease === release &&
+    !isPlainRevisionBase
+  );
+}
+
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
 
@@ -65,6 +86,50 @@ const PLATFORMS: Record<SupportedPlatform, PlatformMeta> = {
     redisServerBin: 'redis-server',
   },
 };
+
+export function resolvePackagedFalkorDBModule(
+  packageJsonPath: string,
+  falkordbVersion: string,
+  platform: SupportedPlatform,
+): string | undefined {
+  const packageName = `@falkordblite/${platform}/package.json`;
+  const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  if (
+    typeof packageInfo !== 'object' ||
+    packageInfo === null ||
+    !('version' in packageInfo) ||
+    typeof packageInfo.version !== 'string'
+  ) {
+    throw new Error(`Missing version in ${packageName}`);
+  }
+
+  if (!matchesFalkorDBPackageRelease(packageInfo.version, falkordbVersion)) {
+    return undefined;
+  }
+  const modulePath = join(
+    dirname(packageJsonPath),
+    'bin',
+    PLATFORMS[platform].moduleName,
+  );
+  return existsSync(modulePath) ? modulePath : undefined;
+}
+
+export function resolveManagedFalkorDBModule(
+  packageJsonPath: string | undefined,
+  falkordbVersion: string,
+  platform: SupportedPlatform,
+  cachedModulePath: string,
+): string | undefined {
+  if (packageJsonPath) {
+    const packaged = resolvePackagedFalkorDBModule(
+      packageJsonPath,
+      falkordbVersion,
+      platform,
+    );
+    if (packaged) return packaged;
+  }
+  return existsSync(cachedModulePath) ? cachedModulePath : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // BinaryManager
@@ -257,7 +322,7 @@ export class BinaryManager {
 
   private findManagedFalkorDBModule(key: SupportedPlatform): string | undefined {
     const packageName = `@falkordblite/${key}/package.json`;
-    let packageJsonPath: string;
+    let packageJsonPath: string | undefined;
     try {
       packageJsonPath = require.resolve(packageName);
     } catch (error) {
@@ -267,30 +332,18 @@ export class BinaryManager {
         'code' in error &&
         error.code === 'MODULE_NOT_FOUND'
       ) {
-        const cached = this.cachedFalkorDBModulePath(key);
-        return existsSync(cached) ? cached : undefined;
+        packageJsonPath = undefined;
+      } else {
+        throw error;
       }
-      throw error;
     }
 
-    const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    if (
-      typeof packageInfo !== 'object' ||
-      packageInfo === null ||
-      !('version' in packageInfo) ||
-      typeof packageInfo.version !== 'string'
-    ) {
-      throw new Error(`Missing version in ${packageName}`);
-    }
-
-    const release = this.falkordbVersion.replace(/^v/, '');
-    if (packageInfo.version.endsWith(`-falkordb.${release}`)) {
-      const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    }
-
-    const cached = this.cachedFalkorDBModulePath(key);
-    return existsSync(cached) ? cached : undefined;
+    return resolveManagedFalkorDBModule(
+      packageJsonPath,
+      this.falkordbVersion,
+      key,
+      this.cachedFalkorDBModulePath(key),
+    );
   }
 
   // -----------------------------------------------------------------------

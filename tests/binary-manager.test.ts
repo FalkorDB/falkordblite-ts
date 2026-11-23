@@ -5,7 +5,13 @@ import { createServer, get } from 'node:http';
 import https from 'node:https';
 import { platform, arch } from 'node:os';
 import { dirname, join } from 'node:path';
-import { BinaryManager, FALKORDB_VERSION } from '../src/binary-manager';
+import {
+  BinaryManager,
+  FALKORDB_VERSION,
+  resolveManagedFalkorDBModule,
+  matchesFalkorDBPackageRelease,
+  resolvePackagedFalkorDBModule,
+} from '../src/binary-manager';
 import { cleanupAll, makeTempDir } from './helpers';
 
 afterAll(async () => {
@@ -158,6 +164,113 @@ describe('BinaryManager', () => {
   });
 
   describe('release-aware module resolution', () => {
+    it.each([
+      {
+        packageVersion: '8.10.3-falkordb.4.18.3',
+        falkordbVersion: 'v4.18.3',
+        matches: true,
+      },
+      {
+        packageVersion: '8.10.3-falkordb.6.2.0-license.1',
+        falkordbVersion: 'v6.2.0',
+        matches: true,
+      },
+      {
+        packageVersion: '8.10.3-falkordb.6.2.0-license.1',
+        falkordbVersion: 'v6.2.0-license.1',
+        matches: false,
+      },
+      {
+        packageVersion: '8.10.3-falkordb.6.2.0-rc.1-license.2',
+        falkordbVersion: 'v6.2.0-rc.1-license.2',
+        matches: true,
+      },
+      {
+        packageVersion: '8.10.3-falkordb.6.2.0',
+        falkordbVersion: 'v6.2.0-license.1',
+        matches: false,
+      },
+      {
+        packageVersion: '8.10.3-falkordb.6.2.0-rc.1-license.1',
+        falkordbVersion: 'v6.2.0-rc.1',
+        matches: false,
+      },
+    ])(
+      'matches $packageVersion to $falkordbVersion: $matches',
+      ({ packageVersion, falkordbVersion, matches }) => {
+        expect(matchesFalkorDBPackageRelease(packageVersion, falkordbVersion)).toBe(matches);
+      },
+    );
+
+    it('resolves a platform module only when the package release matches', async () => {
+      const dir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const packageDir = join(dir, 'node_modules', '@falkordblite', key);
+      const packageJson = join(packageDir, 'package.json');
+      const packagedModule = join(packageDir, 'bin', 'falkordb.so');
+      await mkdir(dirname(packagedModule), { recursive: true });
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0-license.1',
+      }));
+      await writeFile(packagedModule, 'packaged');
+
+      expect(resolvePackagedFalkorDBModule(packageJson, 'v6.2.0', key)).toBe(packagedModule);
+      expect(resolvePackagedFalkorDBModule(packageJson, 'v6.2.0-license.1', key)).toBeUndefined();
+    });
+
+    it('rejects invalid package metadata and missing packaged modules', async () => {
+      const dir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const packageJson = join(dir, 'package.json');
+      await writeFile(packageJson, JSON.stringify({}));
+      expect(() => resolvePackagedFalkorDBModule(packageJson, 'v6.2.0', key))
+        .toThrow('Missing version');
+
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0',
+      }));
+      expect(resolvePackagedFalkorDBModule(packageJson, 'v6.2.0', key))
+        .toBeUndefined();
+      expect(matchesFalkorDBPackageRelease('8.10.3', 'v6.2.0')).toBe(false);
+    });
+
+    it('prefers a matching packaged module and otherwise uses the cache', async () => {
+      const dir = await makeTempDir();
+      const key = BinaryManager.detectPlatform();
+      const packageJson = join(dir, 'package.json');
+      const packagedModule = join(dir, 'bin', 'falkordb.so');
+      const cachedModule = join(dir, 'cache', 'falkordb.so');
+      await mkdir(dirname(packagedModule), { recursive: true });
+      await mkdir(dirname(cachedModule), { recursive: true });
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0',
+      }));
+      await writeFile(packagedModule, 'packaged');
+      await writeFile(cachedModule, 'cached');
+
+      expect(resolveManagedFalkorDBModule(
+        packageJson,
+        'v6.2.0',
+        key,
+        cachedModule,
+      )).toBe(packagedModule);
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.1',
+      }));
+      expect(resolveManagedFalkorDBModule(
+        packageJson,
+        'v6.2.0',
+        key,
+        cachedModule,
+      )).toBe(cachedModule);
+      expect(resolveManagedFalkorDBModule(
+        undefined,
+        'v6.2.0',
+        key,
+        cachedModule,
+      )).toBe(cachedModule);
+    });
+
     it('does not reuse legacy or differently versioned cached modules', async () => {
       const binDir = await makeTempDir();
       const key = BinaryManager.detectPlatform();
@@ -231,6 +344,24 @@ describe('BinaryManager', () => {
       }));
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
       expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);
+
+      await writeFile(packageJson, JSON.stringify({
+        version: '8.10.3-falkordb.6.2.0-license.1',
+      }));
+      expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
+
+      const collidingCustomRelease = 'v6.2.0-license.1';
+      const collidingCustomCache = cachedModulePath(
+        join(dir, 'cache'),
+        collidingCustomRelease,
+      );
+      await mkdir(dirname(collidingCustomCache), { recursive: true });
+      await writeFile(collidingCustomCache, 'custom release');
+      const customRelease = new IsolatedBinaryManager({
+        ...options,
+        falkordbVersion: collidingCustomRelease,
+      });
+      expect(customRelease.getFalkorDBModulePath()).toBe(collidingCustomCache);
 
       const bundledRedis = join(packageDir, 'bin', 'redis-server');
       await writeFile(bundledRedis, '');
