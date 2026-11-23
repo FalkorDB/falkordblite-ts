@@ -19,6 +19,10 @@ on:
         description: 'OpenSSL version used by the macOS FalkorDB asset'
         required: true
         default: '3.5.9'
+      linux_llvm_version:
+        description: 'LLVM version used by the Linux FalkorDB asset'
+        required: true
+        default: '23.1.6'
 
 jobs:
   build-and-publish:
@@ -40,6 +44,7 @@ jobs:
       FALKORDB_VERSION: ${{ inputs.falkordb_version }}
       MACOS_LLVM_VERSION: ${{ inputs.macos_llvm_version }}
       MACOS_OPENSSL_VERSION: ${{ inputs.macos_openssl_version }}
+      LINUX_LLVM_VERSION: ${{ inputs.linux_llvm_version }}
       PLATFORM: ${{ matrix.platform }}
       FALKORDB_ASSET: ${{ matrix.falkordb_asset }}
     steps:
@@ -173,6 +178,11 @@ jobs:
             do
               grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing macOS notice marker: $marker" >&2; exit 1; }
             done
+          else
+            grep -q "FalkorDB Linux static runtime dependency: LLVM OpenMP (libomp.a) (LLVM ${LINUX_LLVM_VERSION})" THIRD-PARTY-NOTICES.txt || {
+              echo "Missing Linux LLVM OpenMP notice marker" >&2
+              exit 1
+            }
           fi
 
       - name: Publish

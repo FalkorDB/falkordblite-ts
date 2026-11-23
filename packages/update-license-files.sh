@@ -18,6 +18,7 @@ FALKORDB_VERSION="$2"
 shift 2
 MACOS_LLVM_VERSION="${MACOS_LLVM_VERSION:-23.1.5}"
 MACOS_OPENSSL_VERSION="${MACOS_OPENSSL_VERSION:-3.5.9}"
+LINUX_LLVM_VERSION="${LINUX_LLVM_VERSION:-23.1.6}"
 
 if [[ ! "$REDIS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Invalid redis_version: $REDIS_VERSION" >&2
@@ -98,6 +99,7 @@ REDIS_VERSION="$REDIS_VERSION" \
 FALKORDB_VERSION="$FALKORDB_VERSION" \
 MACOS_LLVM_VERSION="$MACOS_LLVM_VERSION" \
 MACOS_OPENSSL_VERSION="$MACOS_OPENSSL_VERSION" \
+LINUX_LLVM_VERSION="$LINUX_LLVM_VERSION" \
 REDIS_TREE="$REDIS_TREE" \
 TMP_DIR="$TMP_DIR" \
 PLATFORMS_CSV="$(IFS=,; echo "${PLATFORMS[*]}")" \
@@ -122,6 +124,7 @@ redis_version = os.environ["REDIS_VERSION"]
 falkordb_version = os.environ["FALKORDB_VERSION"]
 macos_llvm_version = os.environ["MACOS_LLVM_VERSION"]
 macos_openssl_version = os.environ["MACOS_OPENSSL_VERSION"]
+linux_llvm_version = os.environ["LINUX_LLVM_VERSION"]
 redis_tree = os.environ["REDIS_TREE"]
 tmp_dir = os.environ["TMP_DIR"]
 platforms = [p for p in os.environ["PLATFORMS_CSV"].split(",") if p]
@@ -409,8 +412,12 @@ def resolve_cargo_runtime_crates(
 
 
 common_sections: list[str] = []
+linux_sections: list[str] = []
 macos_sections: list[str] = []
 
+if "linux-x64" in platforms:
+    if not re.fullmatch(r"\d+\.\d+\.\d+", linux_llvm_version):
+        raise SystemExit(f"Invalid Linux LLVM version: {linux_llvm_version}")
 if "darwin-arm64" in platforms:
     if not re.fullmatch(r"\d+\.\d+\.\d+", macos_llvm_version):
         raise SystemExit(f"Invalid macOS LLVM version: {macos_llvm_version}")
@@ -599,8 +606,26 @@ for src_name, dst_name in [
     with open(src_path, "rb") as rf, open(os.path.join(tmp_dir, dst_name), "wb") as wf:
         wf.write(rf.read())
 
-# macOS statically links Apple's libc++/libc++abi and Homebrew OpenSSL and
-# LLVM OpenMP. These versions were recorded by the FalkorDB v6.2.0 build job.
+# Both modules statically link LLVM OpenMP. The macOS module additionally
+# statically links LLVM libc++/libc++abi and Homebrew OpenSSL. Versions below
+# were recorded by the FalkorDB v6.2.0 build jobs.
+if "linux-x64" in platforms:
+    linux_llvm_tag = f"llvmorg-{linux_llvm_version}"
+    linux_openmp_path = "openmp/LICENSE.TXT"
+    linux_openmp_url = (
+        f"https://raw.githubusercontent.com/llvm/llvm-project/"
+        f"{linux_llvm_tag}/{linux_openmp_path}"
+    )
+    linux_sections.append(
+        format_notice(
+            f"FalkorDB Linux static runtime dependency: LLVM OpenMP (libomp.a) "
+            f"(LLVM {linux_llvm_version})",
+            f"https://github.com/llvm/llvm-project/blob/"
+            f"{linux_llvm_tag}/{linux_openmp_path}",
+            fetch_bytes(linux_openmp_url).decode("utf-8", "replace"),
+        )
+    )
+
 if "darwin-arm64" in platforms:
     llvm_tag = f"llvmorg-{macos_llvm_version}"
     for component, source_path in (
@@ -1105,6 +1130,9 @@ for platform in platforms:
         )
         for sec in common_sections:
             notices_out.write(sec)
+        if platform == "linux-x64":
+            for sec in linux_sections:
+                notices_out.write(sec)
         if platform == "darwin-arm64":
             for sec in macos_sections:
                 notices_out.write(sec)
