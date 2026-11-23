@@ -23,9 +23,16 @@ export function matchesFalkorDBPackageRelease(
   const packageRelease = /-falkordb\.(.+)$/.exec(packageVersion)?.[1];
   const packagingRevision = packageRelease?.match(/^(.*)-license\.\d+$/);
   const packagedRelease = packagingRevision?.[1] ?? packageRelease;
+  const isPlainRelease = /^\d+\.\d+\.\d+$/.test(release);
+  const isPlainRevisionBase =
+    !!packagingRevision && /^\d+\.\d+\.\d+$/.test(packagingRevision[1]);
   return (
     packagedRelease === release &&
-    (!packagingRevision || /^\d+\.\d+\.\d+$/.test(release))
+    (!packagingRevision || isPlainRelease)
+  ) || (
+    !!packagingRevision &&
+    packageRelease === release &&
+    !isPlainRevisionBase
   );
 }
 

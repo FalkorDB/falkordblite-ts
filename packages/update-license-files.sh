@@ -304,6 +304,8 @@ def resolve_github_repo(raw_url: str, parent_repo: str | None = None) -> str:
         url = urljoin(f"https://github.com/{parent_repo}/", url)
     elif url.startswith("git@github.com:"):
         url = "https://github.com/" + url[len("git@github.com:") :]
+    elif url.startswith("ssh://git@github.com/"):
+        url = "https://github.com/" + url[len("ssh://git@github.com/") :]
     if url.endswith(".git"):
         url = url[:-4]
     url = url.rstrip("/")
@@ -470,6 +472,15 @@ with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_t
         )
     )
 
+    excluded_notice_dirs = {
+        "test",
+        "tests",
+        "json_test",
+        "example",
+        "examples",
+        "bench",
+        "benches",
+    }
     redis_dep_dirs = sorted(
         {
             PurePosixPath(rel_path).parts[1]
@@ -492,7 +503,7 @@ with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_t
             for rel_path in sorted(members_by_rel)
             if rel_path.startswith(dep_prefix)
             and not any(
-                seg in {"test", "tests", "example", "examples", "bench", "benches"}
+                seg.lower() in excluded_notice_dirs
                 for seg in PurePosixPath(rel_path).parts[2:-1]
             )
             and is_notice_path(rel_path)
@@ -510,6 +521,11 @@ with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_t
             seen_dep_snippets: set[str] = set()
             for rel_path in sorted(members_by_rel):
                 if not rel_path.startswith(dep_prefix):
+                    continue
+                if any(
+                    seg.lower() in excluded_notice_dirs
+                    for seg in PurePosixPath(rel_path).parts[2:-1]
+                ):
                     continue
                 fname = PurePosixPath(rel_path).name
                 if fname.lower().startswith("readme"):
@@ -733,15 +749,6 @@ while queue:
         if not notice_paths:
             raise SystemExit(f"No text license or notice files found in {repo}@{rev}")
 
-        excluded_notice_dirs = {
-            "test",
-            "tests",
-            "json_test",
-            "example",
-            "examples",
-            "bench",
-            "benches",
-        }
         covered_dep_dirs: set[str] = set()
         for rel_path in notice_paths:
             parts = PurePosixPath(rel_path).parts
@@ -1056,8 +1063,14 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
             raise SystemExit(f"Invalid git commit fragment for crate {name} {ver}: {src}")
         gh_lics = fetch_github_repo_root_licenses(repo, frag)
         member_lics = fetch_github_repo_member_license(repo, frag, name, ver)
-        if not any(is_license_file(url) for url, _ in gh_lics):
-            raise SystemExit(f"No root license files found for git crate {name} {ver} ({repo}@{frag})")
+        if (
+            not any(is_license_file(url) for url, _ in gh_lics)
+            and not member_lics
+        ):
+            raise SystemExit(
+                f"No root or declared member license files found for git crate "
+                f"{name} {ver} ({repo}@{frag})"
+            )
         for lic_url, lic_txt in gh_lics + member_lics:
             rendered.append(
                 format_notice(

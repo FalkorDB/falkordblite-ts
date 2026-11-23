@@ -180,6 +180,11 @@ describe('BinaryManager', () => {
         matches: false,
       },
       {
+        packageVersion: '8.10.3-falkordb.6.2.0-rc.1-license.2',
+        falkordbVersion: 'v6.2.0-rc.1-license.2',
+        matches: true,
+      },
+      {
         packageVersion: '8.10.3-falkordb.6.2.0',
         falkordbVersion: 'v6.2.0-license.1',
         matches: false,
