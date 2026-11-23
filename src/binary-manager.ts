@@ -15,6 +15,20 @@ import { pipeline } from 'node:stream/promises';
 /** Default FalkorDB release version to download. */
 export const FALKORDB_VERSION = 'v6.2.0';
 
+export function matchesFalkorDBPackageRelease(
+  packageVersion: string,
+  falkordbVersion: string,
+): boolean {
+  const release = falkordbVersion.replace(/^v/, '');
+  const packageRelease = /-falkordb\.(.+)$/.exec(packageVersion)?.[1];
+  const packagingRevision = packageRelease?.match(/^(.*)-license\.\d+$/);
+  const packagedRelease = packagingRevision?.[1] ?? packageRelease;
+  return (
+    packagedRelease === release &&
+    (!packagingRevision || /^\d+\.\d+\.\d+$/.test(release))
+  );
+}
+
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
 
@@ -65,6 +79,33 @@ const PLATFORMS: Record<SupportedPlatform, PlatformMeta> = {
     redisServerBin: 'redis-server',
   },
 };
+
+export function resolvePackagedFalkorDBModule(
+  packageJsonPath: string,
+  falkordbVersion: string,
+  platform: SupportedPlatform,
+): string | undefined {
+  const packageName = `@falkordblite/${platform}/package.json`;
+  const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+  if (
+    typeof packageInfo !== 'object' ||
+    packageInfo === null ||
+    !('version' in packageInfo) ||
+    typeof packageInfo.version !== 'string'
+  ) {
+    throw new Error(`Missing version in ${packageName}`);
+  }
+
+  if (!matchesFalkorDBPackageRelease(packageInfo.version, falkordbVersion)) {
+    return undefined;
+  }
+  const modulePath = join(
+    dirname(packageJsonPath),
+    'bin',
+    PLATFORMS[platform].moduleName,
+  );
+  return existsSync(modulePath) ? modulePath : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // BinaryManager
@@ -273,27 +314,12 @@ export class BinaryManager {
       throw error;
     }
 
-    const packageInfo: unknown = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-    if (
-      typeof packageInfo !== 'object' ||
-      packageInfo === null ||
-      !('version' in packageInfo) ||
-      typeof packageInfo.version !== 'string'
-    ) {
-      throw new Error(`Missing version in ${packageName}`);
-    }
-
-    const release = this.falkordbVersion.replace(/^v/, '');
-    const packageRelease = /-falkordb\.(.+)$/.exec(packageInfo.version)?.[1];
-    const packagingRevision = packageRelease?.match(/^(.*)-license\.\d+$/);
-    const packagedRelease = packagingRevision?.[1] ?? packageRelease;
-    if (
-      packagedRelease === release &&
-      (!packagingRevision || /^\d+\.\d+\.\d+$/.test(release))
-    ) {
-      const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
-      if (existsSync(npmBin)) return npmBin;
-    }
+    const packaged = resolvePackagedFalkorDBModule(
+      packageJsonPath,
+      this.falkordbVersion,
+      key,
+    );
+    if (packaged) return packaged;
 
     const cached = this.cachedFalkorDBModulePath(key);
     return existsSync(cached) ? cached : undefined;
