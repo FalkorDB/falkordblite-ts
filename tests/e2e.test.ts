@@ -58,31 +58,44 @@ describe('ephemeral mode', () => {
 // Platform package Redis
 // ---------------------------------------------------------------------------
 
-function packagedRedisServer(): string | undefined {
+function packagedPlatformBinaries():
+  | { redisServerPath: string; falkordbModulePath: string }
+  | undefined {
   try {
     const key = BinaryManager.detectPlatform();
-    const bin = join(dirname(require.resolve(`@falkordblite/${key}/package.json`)), 'bin', 'redis-server');
-    return existsSync(bin) ? bin : undefined;
+    const binDir = join(dirname(require.resolve(`@falkordblite/${key}/package.json`)), 'bin');
+    const redisServerPath = join(binDir, 'redis-server');
+    const falkordbModulePath = join(binDir, 'falkordb.so');
+    return existsSync(redisServerPath) && existsSync(falkordbModulePath)
+      ? { redisServerPath, falkordbModulePath }
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-const packagedRedis = packagedRedisServer();
+const packagedBinaries = packagedPlatformBinaries();
 
-(packagedRedis ? describe : describe.skip)('platform package Redis', () => {
-  it('starts the bundled redis-server with the default module and runs a query', async () => {
-    const db = await openTracked({ redisServerPath: packagedRedis });
-    try {
-      const result = await db.selectGraph('bundled').query<{ n: number }>(
-        'CREATE (:Node {v: 1}) WITH 1 AS x MATCH (n:Node) RETURN count(n) AS n',
-      );
-      expect(result.data).toEqual([{ n: 1 }]);
-    } finally {
-      await db.close();
-    }
+if (packagedBinaries) {
+  describe('platform package Redis', () => {
+    it('starts the bundled redis-server with the bundled module and runs a query', async () => {
+      const db = await openTracked({
+        redisServerPath: packagedBinaries.redisServerPath,
+        modulePath: packagedBinaries.falkordbModulePath,
+      });
+      try {
+        const result = await db.selectGraph('bundled').query<{ n: number }>(
+          'CREATE (:Node {v: 1}) WITH 1 AS x MATCH (n:Node) RETURN count(n) AS n',
+        );
+        expect(result.data).toEqual([{ n: 1 }]);
+      } finally {
+        await db.close();
+      }
+    });
   });
-});
+} else {
+  describe.skip('platform package Redis', () => {});
+}
 
 // ---------------------------------------------------------------------------
 // Full lifecycle

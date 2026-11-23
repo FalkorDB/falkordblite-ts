@@ -115,6 +115,7 @@ from pathlib import PurePosixPath
 import re
 import subprocess
 import tarfile
+import tempfile
 import threading
 from urllib.parse import urljoin
 from urllib.error import HTTPError
@@ -720,10 +721,23 @@ while queue:
         if not notice_paths:
             raise SystemExit(f"No text license or notice files found in {repo}@{rev}")
 
+        excluded_notice_dirs = {
+            "test",
+            "tests",
+            "json_test",
+            "example",
+            "examples",
+            "bench",
+            "benches",
+        }
         covered_dep_dirs: set[str] = set()
         for rel_path in notice_paths:
             parts = PurePosixPath(rel_path).parts
-            if len(parts) >= 2 and parts[0] == "deps":
+            if (
+                len(parts) >= 2
+                and parts[0] == "deps"
+                and not any(part.lower() in excluded_notice_dirs for part in parts[2:-1])
+            ):
                 covered_dep_dirs.add(parts[1])
             dep_text = maybe_annotate_malformed_agpl(rel_path, read_dep_text(rel_path))
             common_sections.append(
@@ -871,6 +885,9 @@ for platform in platforms:
 
 github_repo_license_cache: dict[tuple[str, str], list[tuple[str, str]]] = {}
 github_repo_license_lock = threading.Lock()
+github_repo_member_license_cache: dict[
+    tuple[str, str, str, str], list[tuple[str, str]]
+] = {}
 
 
 def fetch_github_repo_root_licenses(repo: str, ref: str) -> list[tuple[str, str]]:
@@ -904,6 +921,117 @@ def fetch_github_repo_root_licenses(repo: str, ref: str) -> list[tuple[str, str]
     return found
 
 
+def fetch_github_repo_member_license(
+    repo: str, ref: str, package_name: str, package_version: str
+) -> list[tuple[str, str]]:
+    cache_key = (repo, ref, package_name, package_version)
+    with github_repo_license_lock:
+        if cache_key in github_repo_member_license_cache:
+            return github_repo_member_license_cache[cache_key]
+
+    archive_bytes = fetch_bytes(f"https://github.com/{repo}/archive/{ref}.tar.gz")
+    found: list[tuple[str, str]] = []
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as gh_tf:
+        members = [m for m in gh_tf.getmembers() if m.isfile()]
+        if not members:
+            raise SystemExit(f"Empty archive for {repo}@{ref}")
+        root_prefix = members[0].name.split("/", 1)[0] + "/"
+        manifest_paths = sorted(
+            m.name[len(root_prefix) :]
+            for m in members
+            if m.name.startswith(root_prefix)
+            and PurePosixPath(m.name[len(root_prefix) :]).name == "Cargo.toml"
+        )
+        if not manifest_paths:
+            raise SystemExit(f"No Cargo.toml found for git crate {package_name} {package_version} ({repo}@{ref})")
+
+        with tempfile.TemporaryDirectory(prefix="git-crate-license-", dir=tmp_dir) as extract_dir:
+            source_root = safe_extract_tar_regular_files(gh_tf, extract_dir)
+            candidate_paths = sorted(
+                manifest_paths,
+                key=lambda path: (path != "Cargo.toml", path.count("/"), path),
+            )
+            matching_packages: dict[str, dict[str, str | None]] = {}
+            for manifest_rel_path in candidate_paths:
+                manifest_path = os.path.join(source_root, *PurePosixPath(manifest_rel_path).parts)
+                try:
+                    metadata_output = subprocess.check_output(
+                        [
+                            "cargo",
+                            "metadata",
+                            "--no-deps",
+                            "--format-version",
+                            "1",
+                            "--manifest-path",
+                            manifest_path,
+                        ],
+                        cwd=source_root,
+                        stderr=subprocess.PIPE,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    error = exc.stderr.decode("utf-8", "replace") if exc.stderr else str(exc)
+                    raise SystemExit(
+                        f"Unable to inspect Cargo manifest {manifest_rel_path} "
+                        f"for {repo}@{ref}: {error.strip()}"
+                    ) from exc
+                metadata = json.loads(metadata_output.decode("utf-8"))
+                for package in metadata.get("packages", []):
+                    if package.get("name") != package_name or package.get("version") != package_version:
+                        continue
+                    package_manifest = package.get("manifest_path")
+                    if not package_manifest:
+                        raise SystemExit(
+                            f"Cargo metadata omitted the manifest path for "
+                            f"{package_name} {package_version} in {repo}@{ref}"
+                        )
+                    matching_packages[os.path.realpath(package_manifest)] = package
+                if matching_packages:
+                    break
+
+            if not matching_packages:
+                raise SystemExit(
+                    f"Git crate {package_name} {package_version} not found in "
+                    f"Cargo manifests at {repo}@{ref}"
+                )
+            if len(matching_packages) > 1:
+                raise SystemExit(
+                    f"Ambiguous Cargo manifests for git crate {package_name} "
+                    f"{package_version} in {repo}@{ref}"
+                )
+
+            package = next(iter(matching_packages.values()))
+            license_file = package.get("license_file")
+            if license_file:
+                if not os.path.isabs(license_file):
+                    license_file = os.path.join(
+                        os.path.dirname(package["manifest_path"]), license_file
+                    )
+                source_root_real = os.path.realpath(source_root)
+                license_path = os.path.realpath(license_file)
+                if os.path.commonpath([source_root_real, license_path]) != source_root_real:
+                    raise SystemExit(
+                        f"Unsafe declared license-file path for git crate "
+                        f"{package_name} {package_version}: {license_file}"
+                    )
+                if not os.path.isfile(license_path):
+                    raise SystemExit(
+                        f"Declared license-file missing for git crate "
+                        f"{package_name} {package_version}: {license_file}"
+                    )
+                rel_path = os.path.relpath(license_path, source_root_real).replace(os.sep, "/")
+                with open(license_path, encoding="utf-8", errors="replace") as license_in:
+                    found.append(
+                        (
+                            f"https://github.com/{repo}/blob/{ref}/{rel_path}",
+                            license_in.read(),
+                        )
+                    )
+
+    with github_repo_license_lock:
+        github_repo_member_license_cache[cache_key] = found
+    return found
+
+
 def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str], list[str]]:
     name, ver, src = item
     rendered: list[str] = []
@@ -915,9 +1043,10 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
         if not re.fullmatch(r"[0-9a-f]{40}", frag):
             raise SystemExit(f"Invalid git commit fragment for crate {name} {ver}: {src}")
         gh_lics = fetch_github_repo_root_licenses(repo, frag)
+        member_lics = fetch_github_repo_member_license(repo, frag, name, ver)
         if not any(is_license_file(url) for url, _ in gh_lics):
             raise SystemExit(f"No root license files found for git crate {name} {ver} ({repo}@{frag})")
-        for lic_url, lic_txt in gh_lics:
+        for lic_url, lic_txt in gh_lics + member_lics:
             rendered.append(
                 format_notice(
                     f"FalkorDB Rust crate: {name} {ver} (git {repo}@{frag[:12]})",
@@ -1167,7 +1296,7 @@ for platform in "${PLATFORMS[@]}"; do
   grep -q "Copyright notices for The Rust Standard Library" "$notices_file"
   grep -q "Out-of-tree dependencies" "$notices_file"
   grep -q "Copyright Redis Ltd. 2016 - present" "$notices_file"
-  grep -q "aho-corasick-1.1.4" "$notices_file"
+  grep -q "aho-corasick-1.1.4</h3>" "$notices_file"
   grep -q "FalkorDB Rust crate: lazy_static " "$notices_file"
   grep -q "FalkorDB Rust crate: roaring " "$notices_file"
   if [[ "${platform}" == "darwin-arm64" ]]; then

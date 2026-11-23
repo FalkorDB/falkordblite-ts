@@ -160,6 +160,11 @@ Redis >= 8.0.0, FalkorDB >= v6.2.0, Python >= 3.9, and Cargo) and update
 toolchain changes, also set `MACOS_LLVM_VERSION` and `MACOS_OPENSSL_VERSION`;
 when the Linux asset's toolchain changes, set `LINUX_LLVM_VERSION`. Use the
 versions recorded by the respective builds and regenerate the platform notices.
+The publish workflow rejects unmapped FalkorDB release/asset pairs; update its
+reviewed toolchain mapping when moving to another asset.
+If the asset's Rust toolchain changes, also update `rust_license_source_ref` in
+`packages/update-license-files.sh` before regenerating notices; it pins the
+Rust standard-library license and attribution sources.
 
 ## License
 

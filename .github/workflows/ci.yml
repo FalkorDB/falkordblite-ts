@@ -134,7 +134,7 @@ jobs:
       - name: Install packed platform package
         run: |
           npm install --no-save --ignore-scripts --package-lock=false "./packages/${{ matrix.platform }}/${PLATFORM_TARBALL}"
-          node -e "const fs = require('node:fs'); const path = require('node:path'); const pkg = require.resolve('@falkordblite/${{ matrix.platform }}/package.json'); const bin = path.join(path.dirname(pkg), 'bin', 'redis-server'); if (!fs.existsSync(bin)) throw new Error('Packed platform redis-server is missing'); console.log('Using ' + bin)"
+          node -e "const fs = require('node:fs'); const path = require('node:path'); const pkg = require.resolve('@falkordblite/${{ matrix.platform }}/package.json'); const binDir = path.join(path.dirname(pkg), 'bin'); for (const file of ['redis-server', 'falkordb.so']) { const binary = path.join(binDir, file); if (!fs.existsSync(binary)) throw new Error('Packed platform binary is missing: ' + binary); console.log('Using ' + binary); }"
 
       - name: Run packaged Redis graph-query smoke test
         run: npm test -- --runInBand tests/e2e.test.ts -t "platform package Redis"

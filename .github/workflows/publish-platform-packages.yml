@@ -75,6 +75,37 @@ jobs:
             echo "falkordb_version must be >= v6.2.0 (got ${FALKORDB_VERSION})" >&2
             exit 1
           fi
+          # Reviewed against the exact upstream v6.2.0 asset build records.
+          # New asset releases require an explicit mapping update before publishing.
+          case "${FALKORDB_VERSION}:${PLATFORM}:${FALKORDB_ASSET}" in
+            v6.2.0:darwin-arm64:falkordb-macos-arm64v8.so)
+              expected_llvm_version=23.1.5
+              expected_openssl_version=3.5.9
+              ;;
+            v6.2.0:linux-x64:falkordb-x64.so)
+              expected_llvm_version=23.1.6
+              expected_openssl_version=
+              ;;
+            *)
+              echo "No reviewed toolchain mapping for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
+              exit 1
+              ;;
+          esac
+          if [[ "${PLATFORM}" == "darwin-arm64" ]]; then
+            [[ "${MACOS_LLVM_VERSION}" == "${expected_llvm_version}" ]] || {
+              echo "macos_llvm_version must be ${expected_llvm_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
+              exit 1
+            }
+            [[ "${MACOS_OPENSSL_VERSION}" == "${expected_openssl_version}" ]] || {
+              echo "macos_openssl_version must be ${expected_openssl_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
+              exit 1
+            }
+          else
+            [[ "${LINUX_LLVM_VERSION}" == "${expected_llvm_version}" ]] || {
+              echo "linux_llvm_version must be ${expected_llvm_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
+              exit 1
+            }
+          fi
 
       - name: Build Redis from source
         run: |
@@ -163,7 +194,7 @@ jobs:
             "COPYRIGHT-library.html" \
             "Copyright notices for The Rust Standard Library" \
             "Out-of-tree dependencies" \
-            "aho-corasick-1.1.4" \
+            "aho-corasick-1.1.4</h3>" \
             "FalkorDB Rust crate: lazy_static " \
             "FalkorDB Rust crate: roaring "
           do
