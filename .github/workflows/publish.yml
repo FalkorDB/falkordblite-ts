@@ -30,7 +30,7 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        run: npm ci --omit=optional --include=dev
+        run: npm ci
 
       - name: Build
         run: npm run build
