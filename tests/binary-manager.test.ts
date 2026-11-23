@@ -237,6 +237,19 @@ describe('BinaryManager', () => {
       }));
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
 
+      const collidingCustomRelease = 'v6.2.0-license.1';
+      const collidingCustomCache = cachedModulePath(
+        join(dir, 'cache'),
+        collidingCustomRelease,
+      );
+      await mkdir(dirname(collidingCustomCache), { recursive: true });
+      await writeFile(collidingCustomCache, 'custom release');
+      const customRelease = new IsolatedBinaryManager({
+        ...options,
+        falkordbVersion: collidingCustomRelease,
+      });
+      expect(customRelease.getFalkorDBModulePath()).toBe(collidingCustomCache);
+
       const bundledRedis = join(packageDir, 'bin', 'redis-server');
       await writeFile(bundledRedis, '');
       const systemRedis = jest.spyOn(IsolatedBinaryManager, 'findInSystemPath');

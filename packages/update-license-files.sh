@@ -3,7 +3,7 @@
 #
 # Usage: packages/update-license-files.sh <redis_version> <falkordb_version> [platform...]
 # Example: packages/update-license-files.sh 8.10.3 v6.2.0
-# Requires: Redis >= 8.0.0, FalkorDB >= v6.2.0, curl, python3, and cargo.
+# Requires: Redis >= 8.0.0, FalkorDB >= v6.2.0, curl, Python >= 3.9, and cargo.
 #
 # Must be re-run (and the result committed) whenever the bundled versions change.
 set -euo pipefail
@@ -16,6 +16,8 @@ fi
 REDIS_VERSION="$1"
 FALKORDB_VERSION="$2"
 shift 2
+MACOS_LLVM_VERSION="${MACOS_LLVM_VERSION:-23.1.5}"
+MACOS_OPENSSL_VERSION="${MACOS_OPENSSL_VERSION:-3.5.9}"
 
 if [[ ! "$REDIS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Invalid redis_version: $REDIS_VERSION" >&2
@@ -46,6 +48,11 @@ for required_cmd in curl python3 cargo; do
     exit 1
   fi
 done
+
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
+  echo "Python 3.9 or later is required for python3." >&2
+  exit 1
+fi
 
 PACKAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ $# -gt 0 ]]; then
@@ -89,6 +96,8 @@ fetch "${FALKORDB_ARCHIVE}" "$TMP_DIR/falkordb.tar.gz"
 
 REDIS_VERSION="$REDIS_VERSION" \
 FALKORDB_VERSION="$FALKORDB_VERSION" \
+MACOS_LLVM_VERSION="$MACOS_LLVM_VERSION" \
+MACOS_OPENSSL_VERSION="$MACOS_OPENSSL_VERSION" \
 REDIS_TREE="$REDIS_TREE" \
 TMP_DIR="$TMP_DIR" \
 PLATFORMS_CSV="$(IFS=,; echo "${PLATFORMS[*]}")" \
@@ -111,6 +120,8 @@ import urllib.request
 
 redis_version = os.environ["REDIS_VERSION"]
 falkordb_version = os.environ["FALKORDB_VERSION"]
+macos_llvm_version = os.environ["MACOS_LLVM_VERSION"]
+macos_openssl_version = os.environ["MACOS_OPENSSL_VERSION"]
 redis_tree = os.environ["REDIS_TREE"]
 tmp_dir = os.environ["TMP_DIR"]
 platforms = [p for p in os.environ["PLATFORMS_CSV"].split(",") if p]
@@ -165,7 +176,7 @@ def fetch_bytes(url: str, *, api: bool = False) -> bytes:
 
 
 def format_notice(component: str, source: str, text: str) -> str:
-    cleaned = text.strip("\r\n")
+    cleaned = "\n".join(line.rstrip(" \t") for line in text.splitlines()).strip("\n")
     if not cleaned:
         raise SystemExit(f"Empty notice text for {component} ({source})")
     return (
@@ -398,6 +409,13 @@ def resolve_cargo_runtime_crates(
 
 
 common_sections: list[str] = []
+macos_sections: list[str] = []
+
+if "darwin-arm64" in platforms:
+    if not re.fullmatch(r"\d+\.\d+\.\d+", macos_llvm_version):
+        raise SystemExit(f"Invalid macOS LLVM version: {macos_llvm_version}")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", macos_openssl_version):
+        raise SystemExit(f"Invalid macOS OpenSSL version: {macos_openssl_version}")
 
 # 1. Extract Redis license files, dynamically discovered deps/*, embedded Lua modules, and src/.
 with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_tf:
@@ -562,7 +580,7 @@ with tarfile.open(os.path.join(tmp_dir, "redis.tar.gz"), mode="r:gz") as redis_t
     if "src/fast_float_strtod.c" not in src_captured and "fast_float" not in redis_dep_dirs:
         raise SystemExit("Missing fast_float notice in Redis src/ or deps/")
 
-# 2. Extract FalkorDB source archive, top-level licenses, LLVM libomp notice, and Cargo tree.
+# 2. Extract FalkorDB source archive, top-level licenses, and Cargo tree.
 falkordb_extract_parent = os.path.join(tmp_dir, "falkordb-src")
 os.makedirs(falkordb_extract_parent, exist_ok=True)
 with tarfile.open(os.path.join(tmp_dir, "falkordb.tar.gz"), mode="r:gz") as fdb_tf:
@@ -581,50 +599,37 @@ for src_name, dst_name in [
     with open(src_path, "rb") as rf, open(os.path.join(tmp_dir, dst_name), "wb") as wf:
         wf.write(rf.read())
 
-# Statically linked LLVM OpenMP runtime (libomp.a built via build/libomp.sh).
-if os.path.isfile(os.path.join(falkordb_src_root, "build", "libomp.sh")):
-    llvm_major = "23"
-    dockerfile_path = os.path.join(falkordb_src_root, "build", "runtime", "Dockerfile")
-    if os.path.isfile(dockerfile_path):
-        with open(dockerfile_path, encoding="utf-8") as df:
-            m_clang = re.search(r"clang\+\+-([0-9]+)", df.read())
-            if m_clang:
-                llvm_major = m_clang.group(1)
-    llvm_license_text = None
-    llvm_tag = f"llvmorg-{llvm_major}.1.0"
-    candidate_tags = [llvm_tag]
-    try:
-        refs = json.loads(
-            fetch_bytes(
-                f"https://api.github.com/repos/llvm/llvm-project/git/matching-refs/tags/llvmorg-{llvm_major}.",
-                api=True,
-            ).decode("utf-8")
+# macOS statically links Apple's libc++/libc++abi and Homebrew OpenSSL and
+# LLVM OpenMP. These versions were recorded by the FalkorDB v6.2.0 build job.
+if "darwin-arm64" in platforms:
+    llvm_tag = f"llvmorg-{macos_llvm_version}"
+    for component, source_path in (
+        ("libc++", "libcxx/LICENSE.TXT"),
+        ("libc++abi", "libcxxabi/LICENSE.TXT"),
+        ("LLVM OpenMP (libomp.a)", "openmp/LICENSE.TXT"),
+    ):
+        source_url = (
+            f"https://raw.githubusercontent.com/llvm/llvm-project/{llvm_tag}/{source_path}"
         )
-        ga_tags = sorted(
-            r["ref"].split("/")[-1]
-            for r in refs
-            if re.fullmatch(rf"llvmorg-{llvm_major}\.[0-9]+\.[0-9]+", r.get("ref", "").split("/")[-1])
+        macos_sections.append(
+            format_notice(
+                f"FalkorDB macOS static runtime dependency: {component} "
+                f"(LLVM {macos_llvm_version})",
+                f"https://github.com/llvm/llvm-project/blob/{llvm_tag}/{source_path}",
+                fetch_bytes(source_url).decode("utf-8", "replace"),
+            )
         )
-        if ga_tags:
-            candidate_tags = [ga_tags[-1]] + candidate_tags
-    except Exception:
-        pass
-    for tag_try in candidate_tags:
-        try:
-            llvm_license_text = fetch_bytes(
-                f"https://raw.githubusercontent.com/llvm/llvm-project/{tag_try}/openmp/LICENSE.TXT"
-            ).decode("utf-8", "replace")
-            llvm_tag = tag_try
-            break
-        except Exception:
-            continue
-    if not llvm_license_text:
-        raise SystemExit(f"Unable to fetch LLVM openmp/LICENSE.TXT for clang++-{llvm_major}")
-    common_sections.append(
+
+    openssl_tag = f"openssl-{macos_openssl_version}"
+    openssl_license_url = (
+        f"https://raw.githubusercontent.com/openssl/openssl/{openssl_tag}/LICENSE.txt"
+    )
+    macos_sections.append(
         format_notice(
-            "FalkorDB static runtime dependency: LLVM OpenMP (libomp.a - openmp/LICENSE.TXT)",
-            f"https://github.com/llvm/llvm-project/blob/{llvm_tag}/openmp/LICENSE.TXT",
-            llvm_license_text,
+            f"FalkorDB macOS static runtime dependency: OpenSSL {macos_openssl_version} "
+            "(libssl.a and libcrypto.a)",
+            f"https://github.com/openssl/openssl/blob/{openssl_tag}/LICENSE.txt",
+            fetch_bytes(openssl_license_url).decode("utf-8", "replace"),
         )
     )
 
@@ -983,7 +988,8 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
         rel == PurePosixPath(license_file).as_posix()
         for rel, _ in crate_notice_entries
     ))
-    if not has_root_license and not has_declared_license and repo_url:
+    has_license_text = has_root_license or has_declared_license
+    if not has_license_text and repo_url:
         gh_repo = resolve_github_repo(repo_url)
         refs_to_try = [vcs_sha1] if vcs_sha1 else [f"v{ver}", ver]
         gh_lics: list[tuple[str, str]] = []
@@ -1011,6 +1017,7 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                 f"No license files found for crate {name} {ver} at its locked "
                 f"revision or version tags {refs_to_try}"
             )
+        has_license_text = True
 
     for rel, txt in crate_notice_entries:
         rendered.append(
@@ -1021,7 +1028,7 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
             )
         )
 
-    if not rendered:
+    if not has_license_text:
         raise SystemExit(
             f"No license texts found in .crate or upstream repository for {name} {ver}"
         )
@@ -1098,6 +1105,9 @@ for platform in platforms:
         )
         for sec in common_sections:
             notices_out.write(sec)
+        if platform == "darwin-arm64":
+            for sec in macos_sections:
+                notices_out.write(sec)
         notices_out.write(rust_library_copyright_sections[platform])
         for crate_name, crate_ver, crate_src in sorted(per_platform_crates[platform]):
             for sec in crate_notice_map[(crate_name, crate_ver, crate_src)]:
@@ -1115,6 +1125,7 @@ grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" "$TMP_DIR/LICENSE-AGPL"
 for platform in "${PLATFORMS[@]}"; do
   notices_file="$TMP_DIR/THIRD-PARTY-NOTICES.${platform}.txt"
   grep -q "Lua CJSON" "$notices_file"
+  grep -q "Redis dependency: lua (deps/lua/COPYRIGHT)" "$notices_file"
   grep -q "Lua BitOp" "$notices_file"
   grep -q "Marc Alexander Lehmann" "$notices_file"
   grep -q "libuv" "$notices_file"
@@ -1131,6 +1142,12 @@ for platform in "${PLATFORMS[@]}"; do
   grep -q "aho-corasick-1.1.4" "$notices_file"
   grep -q "FalkorDB Rust crate: lazy_static " "$notices_file"
   grep -q "FalkorDB Rust crate: roaring " "$notices_file"
+  if [[ "${platform}" == "darwin-arm64" ]]; then
+    grep -q "libc++ (LLVM ${MACOS_LLVM_VERSION})" "$notices_file"
+    grep -q "libc++abi (LLVM ${MACOS_LLVM_VERSION})" "$notices_file"
+    grep -q "LLVM OpenMP (libomp.a) (LLVM ${MACOS_LLVM_VERSION})" "$notices_file"
+    grep -q "OpenSSL ${MACOS_OPENSSL_VERSION} (libssl.a and libcrypto.a)" "$notices_file"
+  fi
 done
 
 cat >"$TMP_DIR/NOTICE" <<EOF

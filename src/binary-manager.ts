@@ -284,12 +284,12 @@ export class BinaryManager {
     }
 
     const release = this.falkordbVersion.replace(/^v/, '');
-    const expectedSuffix = `-falkordb.${release}`;
-    const suffixIndex = packageInfo.version.lastIndexOf(expectedSuffix);
-    const suffixEnd = suffixIndex + expectedSuffix.length;
+    const packageRelease = /-falkordb\.(.+)$/.exec(packageInfo.version)?.[1];
+    const packagingRevision = packageRelease?.match(/^(.*)-license\.\d+$/);
+    const packagedRelease = packagingRevision?.[1] ?? packageRelease;
     if (
-      suffixIndex > 0 &&
-      (suffixEnd === packageInfo.version.length || packageInfo.version[suffixEnd] === '-')
+      packagedRelease === release &&
+      (!packagingRevision || /^\d+\.\d+\.\d+$/.test(release))
     ) {
       const npmBin = join(dirname(packageJsonPath), 'bin', PLATFORMS[key].moduleName);
       if (existsSync(npmBin)) return npmBin;

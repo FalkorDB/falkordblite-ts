@@ -19,6 +19,39 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - name: Verify platform packages are published
+        run: |
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const optionalDependencies = require('./package.json').optionalDependencies ?? {};
+          const packages = ['@falkordblite/linux-x64', '@falkordblite/darwin-arm64'];
+
+          for (const name of packages) {
+            const version = optionalDependencies[name];
+            if (!version) {
+              console.error(`Missing pinned optional dependency: ${name}`);
+              process.exit(1);
+            }
+            try {
+              const publishedVersion = execFileSync(
+                'npm',
+                ['view', `${name}@${version}`, 'version'],
+                { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+              ).trim();
+              if (publishedVersion !== version) {
+                console.error(`Registry returned ${publishedVersion} for ${name}@${version}`);
+                process.exit(1);
+              }
+              console.log(`Verified ${name}@${version} is published.`);
+            } catch (error) {
+              const detail = error.stderr?.toString().trim();
+              console.error(`Required platform package ${name}@${version} is not available.`);
+              if (detail) console.error(detail);
+              process.exit(1);
+            }
+          }
+          NODE
+
       - name: Install redis-server and dependencies
         run: |
           curl -fsSL https://packages.redis.io/gpg | sudo gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg

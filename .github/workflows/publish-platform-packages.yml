@@ -11,6 +11,14 @@ on:
         description: 'FalkorDB release tag'
         required: true
         default: 'v6.2.0'
+      macos_llvm_version:
+        description: 'LLVM version used by the macOS FalkorDB asset'
+        required: true
+        default: '23.1.5'
+      macos_openssl_version:
+        description: 'OpenSSL version used by the macOS FalkorDB asset'
+        required: true
+        default: '3.5.9'
 
 jobs:
   build-and-publish:
@@ -30,6 +38,8 @@ jobs:
     env:
       REDIS_VERSION: ${{ inputs.redis_version }}
       FALKORDB_VERSION: ${{ inputs.falkordb_version }}
+      MACOS_LLVM_VERSION: ${{ inputs.macos_llvm_version }}
+      MACOS_OPENSSL_VERSION: ${{ inputs.macos_openssl_version }}
       PLATFORM: ${{ matrix.platform }}
       FALKORDB_ASSET: ${{ matrix.falkordb_asset }}
     steps:
@@ -93,9 +103,10 @@ jobs:
       - name: Verify redis-server
         run: |
           set -euo pipefail
-          version="$(./packages/${PLATFORM}/bin/redis-server --version)"
+          version="$("./packages/${PLATFORM}/bin/redis-server" --version)"
           echo "$version"
-          [[ "$version" == "Redis server v=${REDIS_VERSION} "* ]]
+          expected_prefix="Redis server v=${REDIS_VERSION} "
+          [[ "$version" == "${expected_prefix}"* ]]
 
       - name: Generate license files and NOTICE
         env:
@@ -132,6 +143,7 @@ jobs:
           for marker in \
             "REDISCONTRIBUTIONS.txt" \
             "Lua CJSON" \
+            "Redis dependency: lua (deps/lua/COPYRIGHT)" \
             "Lua BitOp" \
             "Marc Alexander Lehmann" \
             "libuv" \
@@ -152,6 +164,16 @@ jobs:
           do
             grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing notice marker: $marker" >&2; exit 1; }
           done
+          if [[ "${PLATFORM}" == "darwin-arm64" ]]; then
+            for marker in \
+              "libc++ (LLVM ${MACOS_LLVM_VERSION})" \
+              "libc++abi (LLVM ${MACOS_LLVM_VERSION})" \
+              "LLVM OpenMP (libomp.a) (LLVM ${MACOS_LLVM_VERSION})" \
+              "OpenSSL ${MACOS_OPENSSL_VERSION} (libssl.a and libcrypto.a)"
+            do
+              grep -q "$marker" THIRD-PARTY-NOTICES.txt || { echo "Missing macOS notice marker: $marker" >&2; exit 1; }
+            done
+          fi
 
       - name: Publish
         run: |
