@@ -25,7 +25,64 @@ on:
         default: '23.1.6'
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    env:
+      REDIS_VERSION: ${{ inputs.redis_version }}
+      FALKORDB_VERSION: ${{ inputs.falkordb_version }}
+      MACOS_LLVM_VERSION: ${{ inputs.macos_llvm_version }}
+      MACOS_OPENSSL_VERSION: ${{ inputs.macos_openssl_version }}
+      LINUX_LLVM_VERSION: ${{ inputs.linux_llvm_version }}
+    steps:
+      - name: Validate version and toolchain inputs
+        run: |
+          set -euo pipefail
+          if [[ ! "${REDIS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid redis_version: ${REDIS_VERSION}" >&2
+            exit 1
+          fi
+          IFS=. read -r redis_major _ _ <<<"${REDIS_VERSION}"
+          if (( redis_major < 8 )); then
+            echo "redis_version must be >= 8.0.0 (got ${REDIS_VERSION})" >&2
+            exit 1
+          fi
+          if [[ ! "${FALKORDB_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid falkordb_version: ${FALKORDB_VERSION} (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+          IFS=. read -r fdb_major fdb_minor _ <<<"${FALKORDB_VERSION#v}"
+          if (( fdb_major < 6 || (fdb_major == 6 && fdb_minor < 2) )); then
+            echo "falkordb_version must be >= v6.2.0 (got ${FALKORDB_VERSION})" >&2
+            exit 1
+          fi
+          # Reviewed against the exact upstream v6.2.0 asset build records.
+          # New asset releases require an explicit mapping update before publishing.
+          case "${FALKORDB_VERSION}" in
+            v6.2.0)
+              expected_macos_llvm_version=23.1.5
+              expected_macos_openssl_version=3.5.9
+              expected_linux_llvm_version=23.1.6
+              ;;
+            *)
+              echo "No reviewed toolchain mapping for ${FALKORDB_VERSION}" >&2
+              exit 1
+              ;;
+          esac
+          [[ "${MACOS_LLVM_VERSION}" == "${expected_macos_llvm_version}" ]] || {
+            echo "macos_llvm_version must be ${expected_macos_llvm_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+          [[ "${MACOS_OPENSSL_VERSION}" == "${expected_macos_openssl_version}" ]] || {
+            echo "macos_openssl_version must be ${expected_macos_openssl_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+          [[ "${LINUX_LLVM_VERSION}" == "${expected_linux_llvm_version}" ]] || {
+            echo "linux_llvm_version must be ${expected_linux_llvm_version} for ${FALKORDB_VERSION}" >&2
+            exit 1
+          }
+
   build-and-publish:
+    needs: validate-inputs
     permissions:
       contents: read
       id-token: write
@@ -53,59 +110,6 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-
-      - name: Validate version inputs
-        run: |
-          set -euo pipefail
-          if [[ ! "${REDIS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid redis_version: ${REDIS_VERSION}" >&2
-            exit 1
-          fi
-          IFS=. read -r redis_major _ _ <<<"${REDIS_VERSION}"
-          if (( redis_major < 8 )); then
-            echo "redis_version must be >= 8.0.0 (got ${REDIS_VERSION})" >&2
-            exit 1
-          fi
-          if [[ ! "${FALKORDB_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid falkordb_version: ${FALKORDB_VERSION} (expected vX.Y.Z)" >&2
-            exit 1
-          fi
-          IFS=. read -r fdb_major fdb_minor _ <<<"${FALKORDB_VERSION#v}"
-          if (( fdb_major < 6 || (fdb_major == 6 && fdb_minor < 2) )); then
-            echo "falkordb_version must be >= v6.2.0 (got ${FALKORDB_VERSION})" >&2
-            exit 1
-          fi
-          # Reviewed against the exact upstream v6.2.0 asset build records.
-          # New asset releases require an explicit mapping update before publishing.
-          case "${FALKORDB_VERSION}:${PLATFORM}:${FALKORDB_ASSET}" in
-            v6.2.0:darwin-arm64:falkordb-macos-arm64v8.so)
-              expected_llvm_version=23.1.5
-              expected_openssl_version=3.5.9
-              ;;
-            v6.2.0:linux-x64:falkordb-x64.so)
-              expected_llvm_version=23.1.6
-              expected_openssl_version=
-              ;;
-            *)
-              echo "No reviewed toolchain mapping for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
-              exit 1
-              ;;
-          esac
-          if [[ "${PLATFORM}" == "darwin-arm64" ]]; then
-            [[ "${MACOS_LLVM_VERSION}" == "${expected_llvm_version}" ]] || {
-              echo "macos_llvm_version must be ${expected_llvm_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
-              exit 1
-            }
-            [[ "${MACOS_OPENSSL_VERSION}" == "${expected_openssl_version}" ]] || {
-              echo "macos_openssl_version must be ${expected_openssl_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
-              exit 1
-            }
-          else
-            [[ "${LINUX_LLVM_VERSION}" == "${expected_llvm_version}" ]] || {
-              echo "linux_llvm_version must be ${expected_llvm_version} for ${FALKORDB_VERSION}/${FALKORDB_ASSET}" >&2
-              exit 1
-            }
-          fi
 
       - name: Build Redis from source
         run: |

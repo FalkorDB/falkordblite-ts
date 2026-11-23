@@ -755,6 +755,7 @@ while queue:
             if (
                 len(parts) >= 2
                 and parts[0] == "deps"
+                and is_license_file(rel_path)
                 and not any(part.lower() in excluded_notice_dirs for part in parts[2:-1])
             ):
                 covered_dep_dirs.add(parts[1])
@@ -766,7 +767,6 @@ while queue:
                     dep_text,
                 )
             )
-
         submodule_paths: set[str] = set()
         if ".gitmodules" in rel_members:
             gitmodules_map = parse_gitmodules(read_dep_text(".gitmodules"))
@@ -793,6 +793,27 @@ while queue:
                 submodule_paths.add(sub_path)
                 queue.append((f"{label}/{sub_path}", sub_repo, sub_sha))
 
+        if label == "redisearch" and any(
+            path.startswith("deps/cndict/") for path in rel_members
+        ):
+            friso_license_rev = "3432fa78dc8902f9968eab80831934e79eb121ce"
+            friso_license_path = "LICENSE.md"
+            friso_license_url = (
+                "https://raw.githubusercontent.com/lionsoul2014/friso/"
+                f"{friso_license_rev}/{friso_license_path}"
+            )
+            common_sections.append(
+                format_notice(
+                    f"FalkorDB dependency: {label}/deps/cndict "
+                    "(Friso Chinese dictionary and tokenizer data)",
+                    f"https://github.com/FalkorDB/RediSearch/tree/{rev}/deps/cndict "
+                    f"(license: https://github.com/lionsoul2014/friso/blob/"
+                    f"{friso_license_rev}/{friso_license_path})",
+                    fetch_bytes(friso_license_url).decode("utf-8", "replace"),
+                )
+            )
+            covered_dep_dirs.add("cndict")
+
         # Capture embedded notices in vendored deps/<subdir>/ trees that have
         # no standalone LICENSE/COPYING file (e.g. RediSearch fast_float, geohash, phonetics).
         vendored_dirs = sorted(
@@ -810,24 +831,6 @@ while queue:
         for vdir in vendored_dirs:
             seen_snippets: set[str] = set()
             captured_notice = False
-            if label == "redisearch" and vdir == "cndict":
-                friso_license_rev = "3432fa78dc8902f9968eab80831934e79eb121ce"
-                friso_license_path = "LICENSE.md"
-                friso_license_url = (
-                    "https://raw.githubusercontent.com/lionsoul2014/friso/"
-                    f"{friso_license_rev}/{friso_license_path}"
-                )
-                common_sections.append(
-                    format_notice(
-                        f"FalkorDB dependency: {label}/deps/cndict "
-                        "(Friso Chinese dictionary and tokenizer data)",
-                        f"https://github.com/FalkorDB/RediSearch/tree/{rev}/deps/cndict "
-                        f"(license: https://github.com/lionsoul2014/friso/blob/"
-                        f"{friso_license_rev}/{friso_license_path})",
-                        fetch_bytes(friso_license_url).decode("utf-8", "replace"),
-                    )
-                )
-                captured_notice = True
             for rel_path in sorted(rel_members):
                 if not rel_path.startswith(f"deps/{vdir}/"):
                     continue
@@ -1452,8 +1455,8 @@ try:
             shutil.copy2(destination, backup, follow_symlinks=False)
 
     for destination, staged, backup in prepared:
-        os.replace(staged, destination)
         installed.append((destination, backup))
+        os.replace(staged, destination)
 except BaseException as exc:
     rollback_errors: list[str] = []
     for destination, backup in reversed(installed):

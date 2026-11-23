@@ -114,6 +114,23 @@ export function resolvePackagedFalkorDBModule(
   return existsSync(modulePath) ? modulePath : undefined;
 }
 
+export function resolveManagedFalkorDBModule(
+  packageJsonPath: string | undefined,
+  falkordbVersion: string,
+  platform: SupportedPlatform,
+  cachedModulePath: string,
+): string | undefined {
+  if (packageJsonPath) {
+    const packaged = resolvePackagedFalkorDBModule(
+      packageJsonPath,
+      falkordbVersion,
+      platform,
+    );
+    if (packaged) return packaged;
+  }
+  return existsSync(cachedModulePath) ? cachedModulePath : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // BinaryManager
 // ---------------------------------------------------------------------------
@@ -305,7 +322,7 @@ export class BinaryManager {
 
   private findManagedFalkorDBModule(key: SupportedPlatform): string | undefined {
     const packageName = `@falkordblite/${key}/package.json`;
-    let packageJsonPath: string;
+    let packageJsonPath: string | undefined;
     try {
       packageJsonPath = require.resolve(packageName);
     } catch (error) {
@@ -315,21 +332,18 @@ export class BinaryManager {
         'code' in error &&
         error.code === 'MODULE_NOT_FOUND'
       ) {
-        const cached = this.cachedFalkorDBModulePath(key);
-        return existsSync(cached) ? cached : undefined;
+        packageJsonPath = undefined;
+      } else {
+        throw error;
       }
-      throw error;
     }
 
-    const packaged = resolvePackagedFalkorDBModule(
+    return resolveManagedFalkorDBModule(
       packageJsonPath,
       this.falkordbVersion,
       key,
+      this.cachedFalkorDBModulePath(key),
     );
-    if (packaged) return packaged;
-
-    const cached = this.cachedFalkorDBModulePath(key);
-    return existsSync(cached) ? cached : undefined;
   }
 
   // -----------------------------------------------------------------------
