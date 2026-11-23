@@ -155,8 +155,8 @@ Contributions are welcome. Please open an issue for major changes, and ensure
 
 When changing the bundled Redis or FalkorDB version, run
 `packages/update-license-files.sh <redis_version> <falkordb_version>` (requires
-Redis >= 8.0.0 and FalkorDB >= v6.2.0) and update `LICENSE`, `NOTICE` and this
-README in the same PR.
+Redis >= 8.0.0, FalkorDB >= v6.2.0, and Cargo) and update `LICENSE`, `NOTICE`
+and this README in the same PR.
 
 ## License
 

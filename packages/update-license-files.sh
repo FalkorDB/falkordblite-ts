@@ -106,6 +106,7 @@ import subprocess
 import tarfile
 import threading
 from urllib.parse import urljoin
+from urllib.error import HTTPError
 import urllib.request
 
 redis_version = os.environ["REDIS_VERSION"]
@@ -118,6 +119,11 @@ github_token = os.environ.get("GITHUB_TOKEN", "").strip()
 PLATFORM_TARGETS = {
     "linux-x64": "x86_64-unknown-linux-gnu",
     "darwin-arm64": "aarch64-apple-darwin",
+}
+CRATES_IO_REGISTRY_SOURCES = {
+    "registry+https://github.com/rust-lang/crates.io-index",
+    "registry+https://index.crates.io",
+    "registry+https://index.crates.io/",
 }
 
 COMMENT_BLOCK_RE = re.compile(r"/\*.*?\*/", re.S)
@@ -723,24 +729,28 @@ while queue:
                         )
 
 # 4. Resolve per-platform Rust runtime Cargo dependencies (FalkorDB + RediSearch staticlib).
-per_platform_crates: dict[str, dict[tuple[str, str], str]] = {}
+per_platform_crates: dict[str, set[tuple[str, str, str]]] = {}
 all_needed_crates: dict[tuple[str, str, str], None] = {}
 
 for platform in platforms:
     triple = PLATFORM_TARGETS[platform]
-    merged: dict[tuple[str, str], str] = {}
+    merged: set[tuple[str, str, str]] = set()
     if redisearch_rust_workspace is not None:
         merged.update(
-            resolve_cargo_runtime_crates(
+            (name, version, source)
+            for (name, version), source in resolve_cargo_runtime_crates(
                 redisearch_rust_workspace, "redisearch_rs", triple
-            )
+            ).items()
         )
     merged.update(
-        resolve_cargo_runtime_crates(falkordb_src_root, "falkordb-rs", triple)
+        (name, version, source)
+        for (name, version), source in resolve_cargo_runtime_crates(
+            falkordb_src_root, "falkordb-rs", triple
+        ).items()
     )
     per_platform_crates[platform] = merged
-    for (crate_name, crate_ver), crate_src in merged.items():
-        all_needed_crates[(crate_name, crate_ver, crate_src)] = None
+    for crate in merged:
+        all_needed_crates[crate] = None
 
 github_repo_license_cache: dict[tuple[str, str], list[tuple[str, str]]] = {}
 github_repo_license_lock = threading.Lock()
@@ -800,27 +810,37 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
             )
         return (item, rendered)
 
-    if not src.startswith("registry+"):
-        raise SystemExit(f"Unsupported Cargo package source for {name} {ver}: {src}")
+    if src not in CRATES_IO_REGISTRY_SOURCES:
+        raise SystemExit(
+            f"Unsupported Cargo registry for {name} {ver}: {src}; "
+            "only crates.io registry sources are supported"
+        )
 
     crate_url = f"https://static.crates.io/crates/{name}/{name}-{ver}.crate"
     crate_bytes = fetch_bytes(crate_url)
     lic_expr = "unspecified"
     repo_url: str | None = None
     vcs_sha1: str | None = None
+    license_file: str | None = None
+    declared_license_text: str | None = None
     crate_notice_entries: list[tuple[str, str]] = []
 
     with tarfile.open(fileobj=io.BytesIO(crate_bytes), mode="r:gz") as crate_tf:
         crate_prefix = f"{name}-{ver}/"
-        for m in sorted(crate_tf.getmembers(), key=lambda x: x.name):
-            if not m.isfile() or not m.name.startswith(crate_prefix):
-                continue
-            rel = m.name[len(crate_prefix) :]
+        members_by_rel = {
+            m.name[len(crate_prefix) :]: m
+            for m in crate_tf.getmembers()
+            if m.isfile() and m.name.startswith(crate_prefix)
+        }
+        for rel, m in sorted(members_by_rel.items()):
             if rel == "Cargo.toml":
                 toml_txt = crate_tf.extractfile(m).read().decode("utf-8", "replace")
                 m_lic = re.search(r'^license\s*=\s*"([^"]+)"', toml_txt, re.M)
                 if m_lic:
                     lic_expr = m_lic.group(1)
+                m_license_file = re.search(r'^license-file\s*=\s*"([^"]+)"', toml_txt, re.M)
+                if m_license_file:
+                    license_file = m_license_file.group(1)
                 m_repo = re.search(r'^repository\s*=\s*"([^"]+)"', toml_txt, re.M)
                 if m_repo:
                     repo_url = m_repo.group(1)
@@ -842,10 +862,43 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                         (rel, extracted.read().decode("utf-8", "replace"))
                     )
 
-    has_root_notice = any("/" not in rel for rel, _ in crate_notice_entries)
-    if not has_root_notice and repo_url:
+        if license_file:
+            license_path = PurePosixPath(license_file)
+            if license_path.is_absolute() or ".." in license_path.parts:
+                raise SystemExit(
+                    f"Unsafe license-file path for crate {name} {ver}: {license_file}"
+                )
+            license_member = members_by_rel.get(license_path.as_posix())
+            if license_member is None:
+                raise SystemExit(
+                    f"Declared license-file {license_file} missing from crate {name} {ver}"
+                )
+            if not any(rel == license_path.as_posix() for rel, _ in crate_notice_entries):
+                extracted = crate_tf.extractfile(license_member)
+                if extracted is None:
+                    raise SystemExit(
+                        f"Unable to read declared license-file for crate {name} {ver}: {license_file}"
+                    )
+                declared_license_text = extracted.read().decode("utf-8", "replace")
+
+    if license_file and declared_license_text is not None:
+        license_path = PurePosixPath(license_file)
+        crate_notice_entries.append(
+            (license_path.as_posix(), declared_license_text)
+        )
+
+    has_root_license = any(
+        "/" not in rel
+        and re.match(r"^(license|licence|copying|unlicense)([-_.].*)?$", rel, re.I)
+        for rel, _ in crate_notice_entries
+    )
+    has_declared_license = bool(license_file and any(
+        rel == PurePosixPath(license_file).as_posix()
+        for rel, _ in crate_notice_entries
+    ))
+    if not has_root_license and not has_declared_license and repo_url:
         gh_repo = resolve_github_repo(repo_url)
-        refs_to_try = [vcs_sha1] if vcs_sha1 else [f"v{ver}", ver, "HEAD"]
+        refs_to_try = [vcs_sha1] if vcs_sha1 else [f"v{ver}", ver]
         gh_lics: list[tuple[str, str]] = []
         for candidate_ref in refs_to_try:
             if not candidate_ref:
@@ -854,8 +907,9 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                 gh_lics = fetch_github_repo_root_licenses(gh_repo, candidate_ref)
                 if gh_lics:
                     break
-            except Exception:
-                continue
+            except HTTPError as exc:
+                if exc.code != 404:
+                    raise
         for lic_url, lic_txt in gh_lics:
             rendered.append(
                 format_notice(
@@ -863,6 +917,11 @@ def fetch_crate_notices(item: tuple[str, str, str]) -> tuple[tuple[str, str, str
                     lic_url,
                     lic_txt,
                 )
+            )
+        if not gh_lics:
+            raise SystemExit(
+                f"No license files found for crate {name} {ver} at its locked "
+                f"revision or version tags {refs_to_try}"
             )
 
     for rel, txt in crate_notice_entries:
@@ -886,6 +945,19 @@ with ThreadPoolExecutor(max_workers=16) as executor:
         executor.map(fetch_crate_notices, sorted(all_needed_crates.keys()))
     )
 
+rust_license_source_ref = "1.100.0"
+for license_name in ("LICENSE-APACHE", "LICENSE-MIT"):
+    rust_license_url = (
+        f"https://raw.githubusercontent.com/rust-lang/rust/{rust_license_source_ref}/{license_name}"
+    )
+    common_sections.append(
+        format_notice(
+            f"Rust standard library bundled by RediSearch ({license_name})",
+            f"https://github.com/rust-lang/rust/blob/{rust_license_source_ref}/{license_name}",
+            fetch_bytes(rust_license_url).decode("utf-8", "replace"),
+        )
+    )
+
 for platform in platforms:
     triple = PLATFORM_TARGETS[platform]
     out_path = os.path.join(tmp_dir, f"THIRD-PARTY-NOTICES.{platform}.txt")
@@ -899,9 +971,7 @@ for platform in platforms:
         )
         for sec in common_sections:
             notices_out.write(sec)
-        for (crate_name, crate_ver), crate_src in sorted(
-            per_platform_crates[platform].items()
-        ):
+        for crate_name, crate_ver, crate_src in sorted(per_platform_crates[platform]):
             for sec in crate_notice_map[(crate_name, crate_ver, crate_src)]:
                 notices_out.write(sec)
 PY
@@ -923,6 +993,9 @@ for platform in "${PLATFORMS[@]}"; do
   grep -q "FalkorDB Rust crate: rquickjs " "$notices_file"
   grep -q "quickjs/LICENSE" "$notices_file"
   grep -q "Fabrice Bellard" "$notices_file"
+  grep -q "Rust standard library bundled by RediSearch (LICENSE-APACHE)" "$notices_file"
+  grep -q "Rust standard library bundled by RediSearch (LICENSE-MIT)" "$notices_file"
+  grep -q "The Rust Project Contributors" "$notices_file"
   grep -q "FalkorDB Rust crate: lazy_static " "$notices_file"
   grep -q "FalkorDB Rust crate: roaring " "$notices_file"
 done

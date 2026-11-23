@@ -140,6 +140,9 @@ jobs:
             "FalkorDB Rust crate: rquickjs " \
             "quickjs/LICENSE" \
             "Fabrice Bellard" \
+            "Rust standard library bundled by RediSearch (LICENSE-APACHE)" \
+            "Rust standard library bundled by RediSearch (LICENSE-MIT)" \
+            "The Rust Project Contributors" \
             "FalkorDB Rust crate: lazy_static " \
             "FalkorDB Rust crate: roaring "
           do
