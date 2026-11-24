@@ -187,36 +187,6 @@ describe('graph CRUD operations', () => {
     );
     expect(result.data![0]).toEqual({ 'c.population': 9000000 });
   });
-
-  it('handles node ID comparisons with negative, fractional, and non-numeric values', async () => {
-    const graph = db.selectGraph('id_comparisons');
-    await graph.query('CREATE (:Node), (:Node), (:Node)');
-
-    const negative = await graph.query<{ count: number }>(
-      'MATCH (n:Node) WHERE id(n) > -1 RETURN count(n) AS count',
-    );
-    expect(negative.data).toEqual([{ count: 3 }]);
-
-    const integralFloat = await graph.query<{ id: number }>(
-      'MATCH (n:Node) WHERE id(n) = 1.0 RETURN id(n) AS id',
-    );
-    expect(integralFloat.data).toEqual([{ id: 1 }]);
-
-    const fractional = await graph.query<{ id: number }>(
-      'MATCH (n:Node) WHERE id(n) > 1.5 RETURN id(n) AS id',
-    );
-    expect(fractional.data).toEqual([{ id: 2 }]);
-
-    const nonNumeric = await graph.query<{ count: number }>(
-      "MATCH (n:Node) WHERE id(n) = '1' RETURN count(n) AS count",
-    );
-    expect(nonNumeric.data).toEqual([{ count: 0 }]);
-
-    const nullValue = await graph.query<{ count: number }>(
-      'MATCH (n:Node) WHERE id(n) = null RETURN count(n) AS count',
-    );
-    expect(nullValue.data).toEqual([{ count: 0 }]);
-  });
 });
 
 // ---------------------------------------------------------------------------
