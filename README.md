@@ -21,6 +21,8 @@ await db.close();
 
 ## Installation
 
+Requires Node.js 22 or later.
+
 ```bash
 npm install falkordblite
 ```
@@ -76,10 +78,12 @@ Returns: `Promise<FalkorDB>`
 
 ### Graph API (from `falkordb`)
 
-`selectGraph()` returns the exact `Graph` type from the `falkordb` package, so
-all graph methods (query, roQuery, delete, copy, explain, profile, slowLog,
-constraints, indexes, etc.) work the same. See the upstream client docs for
-details.
+`selectGraph()` returns the exact `Graph` type from the `falkordb` package, and
+its methods follow the upstream v7 API. Compared with v6, query replies expose
+`stats` instead of raw `metadata` lines, `explain()` and `profile()` return an
+`ExecutionPlan`, and `copy()` returns the new `Graph`. See the upstream
+[v6-to-v7 migration guide](https://github.com/FalkorDB/falkordb-ts/blob/main/MIGRATION.md)
+and client docs for details.
 
 ### Advanced exports
 
