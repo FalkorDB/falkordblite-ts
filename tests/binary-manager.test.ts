@@ -206,10 +206,10 @@ describe('BinaryManager', () => {
       await copyFile(join(__dirname, '..', 'src', 'binary-manager.ts'), isolatedSource);
       await mkdir(dirname(packagedModule), { recursive: true });
       const packageJson = join(packageDir, 'package.json');
-      const cachedMatchingModule = cachedModulePath(join(dir, 'cache'), 'v4.18.3');
-      const cachedUpgradedModule = cachedModulePath(join(dir, 'cache'), 'v6.2.0');
+      const cachedMatchingModule = cachedModulePath(join(dir, 'cache'), 'v6.2.0');
+      const cachedUpgradedModule = cachedModulePath(join(dir, 'cache'), 'v6.2.1');
       await writeFile(packageJson, JSON.stringify({
-        version: '8.6.2-falkordb.4.18.3',
+        version: '8.10.3-falkordb.6.2.0',
       }));
       await writeFile(packagedModule, 'packaged');
       await mkdir(dirname(cachedMatchingModule), { recursive: true });
@@ -220,14 +220,14 @@ describe('BinaryManager', () => {
       const { BinaryManager: IsolatedBinaryManager } =
         require(isolatedSource) as typeof import('../src/binary-manager');
       const options = { binDir: join(dir, 'cache') };
-      const matching = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v4.18.3' });
-      const upgraded = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v6.2.0' });
+      const matching = new IsolatedBinaryManager({ ...options, falkordbVersion: 'v6.2.0' });
+      const upgraded = new IsolatedBinaryManager(options);
 
       expect(matching.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
       expect(upgraded.getFalkorDBModulePath()).toBe(cachedUpgradedModule);
 
       await writeFile(packageJson, JSON.stringify({
-        version: '8.6.2-falkordb.6.2.0',
+        version: '8.10.3-falkordb.6.2.1',
       }));
       expect(upgraded.getFalkorDBModulePath()).toBe(await realpath(packagedModule));
       expect(matching.getFalkorDBModulePath()).toBe(cachedMatchingModule);

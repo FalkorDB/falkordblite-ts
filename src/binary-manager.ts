@@ -13,7 +13,7 @@ import { pipeline } from 'node:stream/promises';
 // ---------------------------------------------------------------------------
 
 /** Default FalkorDB release version to download. */
-export const FALKORDB_VERSION = 'v6.2.0';
+export const FALKORDB_VERSION = 'v6.2.1';
 
 /** Maximum HTTP redirects to follow (GitHub → S3). */
 const MAX_REDIRECTS = 5;
@@ -40,7 +40,7 @@ export interface BinaryManagerOptions {
   falkordbModulePath?: string;
   /** Directory to store downloaded binaries. Defaults to <package-root>/bin. */
   binDir?: string;
-  /** FalkorDB GitHub release tag, e.g. "v6.2.0". */
+  /** FalkorDB GitHub release tag, e.g. "v6.2.1". */
   falkordbVersion?: string;
 }
 

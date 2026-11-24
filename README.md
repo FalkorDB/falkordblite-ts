@@ -32,7 +32,7 @@ replace a newer system Redis. It uses a bundled FalkorDB module only when its
 release matches the configured version; otherwise, it downloads the requested
 module.
 
-The platform packages bundle Redis 8.10.3 and FalkorDB 6.2.0.
+The platform packages bundle Redis 8.10.3 and FalkorDB 6.2.1.
 
 If you also want to connect to remote servers, install the upstream client:
 
@@ -102,7 +102,7 @@ These are not required for normal usage but can help with custom embedding.
 | `logFile` | `string` | stdout | Redis log file path. |
 | `timeout` | `number` | `10000` | Startup timeout in milliseconds. |
 | `additionalConfig` | `Record<string, string>` | none | Extra redis.conf key/value pairs. |
-| `falkordbVersion` | `string` | `v6.2.0` | FalkorDB module release tag to download. |
+| `falkordbVersion` | `string` | `v6.2.1` | FalkorDB module release tag to download. |
 | `inheritStdio` | `boolean` | `false` | Pipe redis-server stdout/stderr to the parent. |
 
 Tip: use `additionalConfig` to set a TCP port (for external tools) by adding
@@ -113,11 +113,16 @@ precedence over `falkordbVersion`.
 
 ### Upgrading persisted data
 
-Back up existing data before upgrading. FalkorDB 6.2 can read data saved by the
-previous default, 4.18.3, but once 6.2 saves it, 4.18.3 cannot read it.
-Graphs with CCH indexes must have those indexes removed, and data using RDB
-encoding versions older than 19 must first be saved by a compatible 4.x release;
-see the [upstream upgrade notes](https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.0#upgrade-notes).
+Back up existing data before upgrading. FalkorDB 6.2.1 uses the same RDB format
+as 6.2.0, so no migration is required from 6.2.0. FalkorDB 6.2 can read data
+saved by 4.18.3, but once 6.2 saves it, 4.18.3 cannot read it. Graphs with CCH
+indexes must have those indexes removed, and data using RDB encoding versions
+older than 19 must first be saved by a compatible 4.x release; see the
+[6.2.0 upgrade notes](https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.0#upgrade-notes).
+
+In 6.2.1, `id()` comparisons with floats, null or strings no longer error:
+floats compare numerically, while null and non-numeric values match no nodes.
+See the [6.2.1 upgrade notes](https://github.com/FalkorDB/FalkorDB/releases/tag/v6.2.1#upgrade-notes).
 
 ## Migration guide (embedded -> remote)
 
