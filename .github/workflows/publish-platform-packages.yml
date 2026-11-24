@@ -10,7 +10,7 @@ on:
       falkordb_version:
         description: 'FalkorDB release tag'
         required: true
-        default: 'v6.2.0'
+        default: 'v6.2.1'
 
 jobs:
   build-and-publish:
@@ -80,7 +80,7 @@ jobs:
         run: |
           cd "packages/${{ matrix.platform }}"
           # Derive version from Redis and FalkorDB versions
-          # Redis 8.10.3 + FalkorDB v6.2.0 -> 8.10.3-falkordb.6.2.0
+          # Redis 8.10.3 + FalkorDB v6.2.1 -> 8.10.3-falkordb.6.2.1
           FALKORDB_VERSION="${{ inputs.falkordb_version }}"
           FALKORDB_VERSION_CLEAN="${FALKORDB_VERSION#v}"
           PACKAGE_VERSION="${{ inputs.redis_version }}-falkordb.${FALKORDB_VERSION_CLEAN}"

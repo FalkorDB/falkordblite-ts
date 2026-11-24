@@ -29,7 +29,7 @@ export interface FalkorDBLiteOptions {
   timeout?: number;
   /** Extra redis.conf key-value pairs. */
   additionalConfig?: Record<string, string>;
-  /** FalkorDB release version tag (e.g. "v6.2.0"). */
+  /** FalkorDB release version tag (e.g. "v6.2.1"). */
   falkordbVersion?: string;
   /** If true, pipe redis-server stdout/stderr to parent process. */
   inheritStdio?: boolean;
